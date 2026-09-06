@@ -570,9 +570,26 @@ FlatnessCommandOutput computeFlatnessCommand(const UgvState& state,
     const double s = std::sin(state.yaw);
     output.accel = c * ux + s * uy;
     const double v_eps = std::max(config.flatness_v_eps, 1.0e-6);
-    const double denom =
-        std::copysign(std::max(std::fabs(body_speed), v_eps), body_speed == 0.0 ? 1.0 : body_speed);
-    output.angular_speed = (-s * ux + c * uy) / denom;
+    // A skid-steer chassis has lateral motion at the measured body origin while
+    // turning. Fixed Cartesian derivative gain can feed that motion back with
+    // positive yaw gain proportional to 1/v. Set transverse bandwidth by a
+    // spatial response length; keep the measured world velocity and longitudinal
+    // PVA feedback. This is one continuous tracking law, including at v=0.
+    const double length = config.flatness_lateral_response_length;
+    const double damping = config.flatness_lateral_damping;
+    if (!std::isfinite(length) || length <= 0.0 || !std::isfinite(damping) || damping <= 0.0) {
+        return output;
+    }
+    const double bandwidth = std::fabs(body_speed) / length;
+    const double lateral_position_error = -s * (reference.x - state.x) + c * (reference.y - state.y);
+    const double lateral_velocity_error = -s * (reference.vx - state.vx) + c * (reference.vy - state.vy);
+    const double lateral_accel = -s * reference.ax + c * reference.ay +
+        2.0 * damping * bandwidth * lateral_velocity_error +
+        bandwidth * bandwidth * lateral_position_error;
+    // Damped inverse of the dynamic-extension decoupling coefficient. Unlike a
+    // signed epsilon denominator, this stays continuous during stop/reversal.
+    // Exact transverse acceleration tracking is intentionally relaxed near rest.
+    output.angular_speed = body_speed * lateral_accel / (body_speed * body_speed + v_eps * v_eps);
     output.linear_speed = body_speed + output.accel * dt;
     boxSaturateUnicycle(output.linear_speed, output.angular_speed, config.chassis_max_linear_speed,
                         config.chassis_max_yaw_rate);

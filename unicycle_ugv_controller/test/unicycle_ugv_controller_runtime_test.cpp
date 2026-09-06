@@ -288,6 +288,21 @@ TEST(UnicycleLaw, FlatnessUsesWorldVelocityPd) {
     EXPECT_GT(output.linear_speed, 0.2);
 }
 
+TEST(UnicycleLaw, FlatnessYawIsContinuousAcrossZeroSpeed) {
+    UgvState state;
+    state.velocity_valid = true;
+    WorldPvaReference reference;
+    reference.valid = true;
+    reference.y = 0.01;
+    reference.ay = 0.2;
+    ControllerConfig config;
+    for (double speed : {-1e-6, 0.0, 1e-6}) {
+        const auto output = computeFlatnessCommand(state, reference, speed, 0.004, config);
+        ASSERT_TRUE(output.valid);
+        EXPECT_LT(std::fabs(output.angular_speed), 1e-4);
+    }
+}
+
 TEST(UnicycleSm, FlatnessRetainsCommandWhenClockDoesNotAdvance) {
     ros::Time::init();
     UgvState state;

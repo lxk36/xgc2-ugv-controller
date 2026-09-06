@@ -211,6 +211,9 @@ install(DIRECTORY tools
 if(CATKIN_ENABLE_TESTING)
   # Diagnostic replay uses the production law; no second controller formula.
   add_executable(flatness_reference_replay tools/flatness_reference_replay.cpp)
+  add_test(NAME flatness_skid_response
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/flatness_skid_response_test.py
+      $<TARGET_FILE:flatness_reference_replay>)
   add_dependencies(flatness_reference_replay ${catkin_EXPORTED_TARGETS})
   target_link_libraries(flatness_reference_replay
     unicycle_ugv_controller_nmpc_runtime ${catkin_LIBRARIES})

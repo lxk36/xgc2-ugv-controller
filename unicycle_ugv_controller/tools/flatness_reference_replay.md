@@ -19,8 +19,18 @@ flatness_reference_replay pva.csv 6 4 0.15 0.15 0.5235 > delayed.csv
 
 The diagnostic plant is an ideal unicycle with optional pure command delay,
 first-order velocity response and yaw-command limit. Controller and pose
-updates use 4 ms steps. This intentionally simplified comparison omits skid,
+updates use 4 ms steps. An optional effective axle offset adds body lateral velocity `-offset * yaw_rate`;
+optional initial Y error and yaw perturb the starting pose. This simplified comparison omits tire physics,
 wheel PI, contact loads, network jitter and the real publish schedule. It can
 expose sensitivity to lag and saturation; it cannot identify a physical plant,
 prove a Gazebo root cause, or establish closed-loop safety. The recorded PVA is
 held fixed, so this is a tracking-layer replay, not a new DMPC closed loop.
+
+```
+flatness_reference_replay straight.csv 6 4 .005 .010 .5235 .229 .01 .05 > skid.csv
+```
+
+The production transverse gains now use response length 0.8 m and damping 1;
+kp/kv arguments affect longitudinal feedback. Earlier results with fixed
+Cartesian gains belong to the old source revision and must not be compared
+as if only plant parameters changed.

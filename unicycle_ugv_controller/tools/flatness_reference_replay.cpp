@@ -14,7 +14,7 @@ using namespace unicycle_ugv_controller;
 struct Input { double t,x,y,vx,vy,ax,ay; };
 struct Command { double t,v,w; };
 int main(int argc,char** argv) {
- if(argc!=7) { std::cerr<<"usage: replay input.csv kp kv delay_s tau_s plant_yaw_limit\n";return 2; }
+ if(argc!=7 && argc!=9 && argc!=10) { std::cerr<<"usage: replay input.csv kp kv delay_s tau_s plant_yaw_limit [effective_axle_offset_m initial_y_error_m [initial_yaw_rad]]\n";return 2; }
  std::ifstream file(argv[1]);std::vector<Input> input;std::string line;
  while(std::getline(file,line)) {
   std::replace(line.begin(),line.end(),',',' ');std::istringstream stream(line);Input r;
@@ -24,7 +24,10 @@ int main(int argc,char** argv) {
  ControllerConfig cfg;cfg.flatness_kp=std::stod(argv[2]);cfg.flatness_kv=std::stod(argv[3]);
  const double delay=std::stod(argv[4]),tau=std::stod(argv[5]),limit=std::stod(argv[6]),dt=.004;
  if(delay<0||tau<0||limit<=0) return 2;
- UgvState state;state.x=input[0].x;state.y=input[0].y;state.yaw=0;state.received=true;
+ // Kinematic diagnostic: base-frame lateral velocity = -offset * yaw rate.
+ const double offset=argc>=9?std::stod(argv[7]):0;
+ const double initial_y_error=argc>=9?std::stod(argv[8]):0;
+ UgvState state;state.x=input[0].x;state.y=input[0].y+initial_y_error;state.yaw=argc==10?std::stod(argv[9]):0;state.received=true;
  PoseVelocityEstimator filter;double body_speed=0,v=0,w=0;std::size_t index=0;
  std::deque<Command> queue;Command delayed{input[0].t,0,0};
  std::cout<<"t,x,y,target_x,target_y,cmd_v,cmd_w,body_v,body_w,error\n";
@@ -44,7 +47,8 @@ int main(int argc,char** argv) {
   const double alpha=tau>0?-std::expm1(-dt/tau):1;
   v+=alpha*(delayed.v-v);w+=alpha*(delayed.w-w);
   const double heading=state.yaw+.5*w*dt;
-  state.x+=v*std::cos(heading)*dt;state.y+=v*std::sin(heading)*dt;state.yaw+=w*dt;
+  state.x+=(v*std::cos(heading)+offset*w*std::sin(heading))*dt;
+  state.y+=(v*std::sin(heading)-offset*w*std::cos(heading))*dt;state.yaw+=w*dt;
   const double error=std::hypot(state.x-reference.x,state.y-reference.y);
   if(!std::isfinite(error))return 3;
   std::cout<<t<<','<<state.x<<','<<state.y<<','<<reference.x<<','<<reference.y<<','<<body_speed<<','<<cmd_w<<','<<v<<','<<w<<','<<error<<'\n';

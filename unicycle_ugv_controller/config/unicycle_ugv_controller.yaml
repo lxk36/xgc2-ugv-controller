@@ -28,6 +28,9 @@ chassis:
   max_yaw_rate: 1.05
 
 flatness:
+  # Longitudinal PVA feedback; transverse bandwidth is speed / response length.
+  lateral_response_length: 0.8  # metres
+  lateral_damping: 1.0
   kp: 6.0
   kv: 4.0
   v_eps: 0.15

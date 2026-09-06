@@ -6,7 +6,7 @@ C++ runtime must stay in lockstep with this module.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import atan2, cos, hypot, pi, sin
+from math import atan2, cos, hypot, isfinite, pi, sin
 from typing import Optional, Tuple
 
 
@@ -140,22 +140,28 @@ def flatness_command(
     kp: float = 6.0,
     kv: float = 4.0,
     v_eps: float = 0.15,
+    lateral_response_length: float = 0.8,
+    lateral_damping: float = 1.0,
     max_linear_speed: float = 1.05,
     max_yaw_rate: float = 1.05,
     dt_min: float = 1.0e-4,
     dt_max: float = 0.2,
 ) -> FlatnessOutput:
-    if not (dt_min < dt <= dt_max):
+    if not (dt_min < dt <= dt_max) or not (
+        isfinite(lateral_response_length) and lateral_response_length > 0
+        and isfinite(lateral_damping) and lateral_damping > 0
+    ):
         return FlatnessOutput(0.0, 0.0, 0.0, False)
     ux = ref_ax + kv * (ref_vx - vx) + kp * (ref_x - x)
     uy = ref_ay + kv * (ref_vy - vy) + kp * (ref_y - y)
     c = cos(yaw)
     s = sin(yaw)
     accel = c * ux + s * uy
-    denom = (1.0 if body_speed == 0.0 else (1.0 if body_speed > 0.0 else -1.0)) * max(
-        abs(body_speed), v_eps
-    )
-    omega = (-s * ux + c * uy) / denom
+    bandwidth = abs(body_speed) / lateral_response_length
+    ep = -s * (ref_x - x) + c * (ref_y - y)
+    ev = -s * (ref_vx - vx) + c * (ref_vy - vy)
+    lateral_accel = -s * ref_ax + c * ref_ay + 2 * lateral_damping * bandwidth * ev + bandwidth**2 * ep
+    omega = body_speed * lateral_accel / (body_speed**2 + v_eps**2)
     speed, omega = box_saturate(
         body_speed + accel * dt, omega, max_linear_speed=max_linear_speed, max_yaw_rate=max_yaw_rate
     )

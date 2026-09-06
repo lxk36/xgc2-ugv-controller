@@ -1,6 +1,7 @@
 #include <ros/ros.h>
 
 #include <cmath>
+#include <exception>
 
 #include "unicycle_ugv_controller/unicycle_ugv_ros_node.h"
 
@@ -16,7 +17,12 @@ int main(int argc, char** argv) {
         control_rate_hz = 500.0;
     }
 
-    unicycle_ugv_controller::UnicycleUgvRosNode node(nh);
-    node.run(control_rate_hz);
+    try {
+        unicycle_ugv_controller::UnicycleUgvRosNode node(nh);
+        node.run(control_rate_hz);
+    } catch (const std::exception& error) {
+        ROS_FATAL("[UnicycleUgvController] %s", error.what());
+        return 1;
+    }
     return 0;
 }

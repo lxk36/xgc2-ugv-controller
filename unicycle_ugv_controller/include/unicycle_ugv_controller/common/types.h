@@ -73,6 +73,8 @@ struct ControllerConfig {
     double flatness_kp{6.0};
     double flatness_kv{4.0};
     double flatness_v_eps{0.15};
+    double flatness_lateral_response_length{0.8};
+    double flatness_lateral_damping{1.0};
     double filter_zeta{0.7071067811865476};
     double filter_wn{31.41592653589793};
     double velocity_dt_min{1.0e-4};
