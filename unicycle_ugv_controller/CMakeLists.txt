@@ -209,6 +209,11 @@ install(DIRECTORY tools
   PATTERN "results" EXCLUDE)
 
 if(CATKIN_ENABLE_TESTING)
+  # Diagnostic replay uses the production law; no second controller formula.
+  add_executable(flatness_reference_replay tools/flatness_reference_replay.cpp)
+  add_dependencies(flatness_reference_replay ${catkin_EXPORTED_TARGETS})
+  target_link_libraries(flatness_reference_replay
+    unicycle_ugv_controller_nmpc_runtime ${catkin_LIBRARIES})
   catkin_add_gtest(unicycle_ugv_controller_runtime_test
     test/unicycle_ugv_controller_runtime_test.cpp
     src/reference_cache.cpp
