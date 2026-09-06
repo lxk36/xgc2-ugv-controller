@@ -106,6 +106,12 @@ void Custom1State::tickFlatness(::state_machine::StateContext& ctx) {
     if (have_tick_time_) {
         dt = now - last_tick_time_;
     }
+    // A simulation clock may repeat across event-pump iterations. Accumulate
+    // elapsed time instead of overwriting a valid command with a zero command.
+    if (have_tick_time_ && dt >= 0.0 && dt <= controller_.config().velocity_dt_min) {
+        emitCommandIfDue(ctx);
+        return;
+    }
     last_tick_time_ = now;
     have_tick_time_ = true;
     const WorldPvaReference lifted = controller_.liftedWorldPva();

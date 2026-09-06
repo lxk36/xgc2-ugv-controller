@@ -288,6 +288,35 @@ TEST(UnicycleLaw, FlatnessUsesWorldVelocityPd) {
     EXPECT_GT(output.linear_speed, 0.2);
 }
 
+TEST(UnicycleSm, FlatnessRetainsCommandWhenClockDoesNotAdvance) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    auto cfg = controller.config();
+    cfg.tracking_strategy = TrackingStrategy::FLATNESS;
+    controller.setConfig(cfg);
+    goReadyPose(controller, state, 1.0);
+    setPose(state, 1.02, 0.0, 0.0, 0.0);
+    controller.update(1.02);
+    WorldPvaReference reference;
+    reference.stamp = ros::Time(1.02);
+    reference.x = 0.1;
+    reference.vx = 0.3;
+    reference.valid = true;
+    controller.setWorldPva(reference);
+    postCommand(controller, event_type::CUSTOM1_REQUESTED, 1.02);
+    controller.update(1.02);
+    setPose(state, 1.04, 0.0, 0.0, 0.0);
+    controller.update(1.04);
+    ASSERT_TRUE(controller.command().valid);
+    const double speed = controller.command().linear_speed;
+    ASSERT_GT(speed, 0.0);
+    controller.update(1.04);
+    EXPECT_FALSE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
+    EXPECT_TRUE(controller.command().valid);
+    EXPECT_DOUBLE_EQ(controller.command().linear_speed, speed);
+}
+
 TEST(UnicycleLaw, FlatnessRejectsInvalidDt) {
     UgvState state;
     state.velocity_valid = true;
