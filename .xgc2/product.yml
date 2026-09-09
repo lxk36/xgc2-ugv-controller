@@ -1,7 +1,7 @@
 schema: xgc2.product.v1
 id: xgc2-ugv-controller
 name: XGC2 UGV Controller
-version: 1.1.4-42
+version: 1.1.4-43
 kind: ros1-apt
 summary: ROS1 unicycle NMPC, planar reference trajectory, and reusable Mecanum
   chassis controller (health, Reset, first-order Custom1) for XGC2 robots.
@@ -80,5 +80,5 @@ release:
     xgc2-ros-msgs: rebuild
     xgc2-ros1-utils: rebuild
   apt_versions:
-    bionic: 1.1.4-42
-    focal: 1.1.4-42
+    bionic: 1.1.4-43
+    focal: 1.1.4-43

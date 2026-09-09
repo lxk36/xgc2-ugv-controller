@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 #include "unicycle_ugv_controller/output/cmd_vel_output_consumer.h"
@@ -149,8 +149,10 @@ void UnicycleUgvRosNode::loadParams() {
                       config_.chassis_max_yaw_rate);
     private_nh_.param("flatness/kp", config_.flatness_kp, config_.flatness_kp);
     private_nh_.param("flatness/kv", config_.flatness_kv, config_.flatness_kv);
-    private_nh_.param("flatness/lateral_response_length", config_.flatness_lateral_response_length, config_.flatness_lateral_response_length);
-    private_nh_.param("flatness/lateral_damping", config_.flatness_lateral_damping, config_.flatness_lateral_damping);
+    private_nh_.param("flatness/lateral_response_length", config_.flatness_lateral_response_length,
+                      config_.flatness_lateral_response_length);
+    private_nh_.param("flatness/lateral_damping", config_.flatness_lateral_damping,
+                      config_.flatness_lateral_damping);
     private_nh_.param("flatness/v_eps", config_.flatness_v_eps, config_.flatness_v_eps);
     private_nh_.param("filter/zeta", config_.filter_zeta, config_.filter_zeta);
     private_nh_.param("filter/wn", config_.filter_wn, config_.filter_wn);
@@ -201,9 +203,12 @@ void UnicycleUgvRosNode::loadParams() {
     config_.max_angular_acceleration = finitePositiveOr(config_.max_angular_acceleration, 3.0);
     config_.chassis_max_linear_speed = finitePositiveOr(config_.chassis_max_linear_speed, 1.05);
     config_.chassis_max_yaw_rate = finitePositiveOr(config_.chassis_max_yaw_rate, 1.05);
-    if (!std::isfinite(config_.flatness_lateral_response_length) || config_.flatness_lateral_response_length <= 0.0 ||
-        !std::isfinite(config_.flatness_lateral_damping) || config_.flatness_lateral_damping <= 0.0) {
-        throw std::invalid_argument("flatness lateral response length and damping must be positive and finite");
+    if (!std::isfinite(config_.flatness_lateral_response_length) ||
+        config_.flatness_lateral_response_length <= 0.0 ||
+        !std::isfinite(config_.flatness_lateral_damping) ||
+        config_.flatness_lateral_damping <= 0.0) {
+        throw std::invalid_argument(
+            "flatness lateral response length and damping must be positive and finite");
     }
     config_.flatness_kp = finitePositiveOr(config_.flatness_kp, 6.0);
     config_.flatness_kv = finitePositiveOr(config_.flatness_kv, 4.0);

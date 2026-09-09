@@ -73,6 +73,7 @@ struct ControllerConfig {
     TrackingStrategy tracking_strategy=TrackingStrategy::NMPC;
     double prediction_horizon=1,solve_timeout=.05,result_timeout=.1;
     double nmpc_request_rate_hz=100,command_publish_rate_hz=50;
+    double velocity_dt_min=1.0e-4;
 };
 struct UgvState {double speed=0,yaw=0;};
 struct WorldPvaReference{};

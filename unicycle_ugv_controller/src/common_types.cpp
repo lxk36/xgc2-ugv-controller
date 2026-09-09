@@ -581,11 +581,13 @@ FlatnessCommandOutput computeFlatnessCommand(const UgvState& state,
         return output;
     }
     const double bandwidth = std::fabs(body_speed) / length;
-    const double lateral_position_error = -s * (reference.x - state.x) + c * (reference.y - state.y);
-    const double lateral_velocity_error = -s * (reference.vx - state.vx) + c * (reference.vy - state.vy);
+    const double lateral_position_error =
+        -s * (reference.x - state.x) + c * (reference.y - state.y);
+    const double lateral_velocity_error =
+        -s * (reference.vx - state.vx) + c * (reference.vy - state.vy);
     const double lateral_accel = -s * reference.ax + c * reference.ay +
-        2.0 * damping * bandwidth * lateral_velocity_error +
-        bandwidth * bandwidth * lateral_position_error;
+                                 2.0 * damping * bandwidth * lateral_velocity_error +
+                                 bandwidth * bandwidth * lateral_position_error;
     // Damped inverse of the dynamic-extension decoupling coefficient. Unlike a
     // signed epsilon denominator, this stays continuous during stop/reversal.
     // Exact transverse acceleration tracking is intentionally relaxed near rest.
