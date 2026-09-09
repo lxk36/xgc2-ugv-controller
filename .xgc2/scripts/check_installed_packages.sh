@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "Installed package check failed at line ${LINENO}" >&2' ERR
 
 ROS_DISTRO="${ROS_DISTRO:-noetic}"
 set +u
@@ -24,7 +25,10 @@ test "$(rospack find rigid_state_estimator_msgs)" = "/opt/ros/${ROS_DISTRO}/shar
 test "$(rospack find unicycle_reference_trajectory_msgs)" = "/opt/ros/${ROS_DISTRO}/share/unicycle_reference_trajectory_msgs"
 rosmsg show rigid_state_estimator_msgs/RigidStateEstimate | grep -q '^uint8 estimator_state$'
 rosmsg show rigid_state_estimator_msgs/RigidStateEstimate | grep -q '^geometry_msgs/Vector3 angular_velocity$'
-rosmsg show unicycle_reference_trajectory_msgs/PlanarPvaReference | grep -q '^geometry_msgs/Point position$'
+planar_pva_schema="$(rosmsg show unicycle_reference_trajectory_msgs/PlanarPvaReference)"
+for field in x y yaw vx vy ax ay; do
+  grep -Fxq "float64 ${field}" <<< "${planar_pva_schema}"
+done
 rosmsg show unicycle_reference_trajectory_msgs/AnalyticReference | grep -q '^uint16 analytic_type$'
 rosmsg show unicycle_reference_trajectory_msgs/SampledReference | grep -q '^unicycle_reference_trajectory_msgs/PlanarReferencePoint\[\] points$'
 test -f "/opt/ros/${ROS_DISTRO}/share/unicycle_reference_trajectory/config/unicycle_reference_trajectory.yaml"

@@ -223,7 +223,7 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                                   ? -plant.lateral_offset * actual[i].z()
                                   : actual[i].y();
             if (completed[i] &&
-                ((robots[i].position - goals[i].position).norm() > 0.05 ||
+                (!withinTargetTolerance(robots[i], goals[i]) ||
                  std::hypot(actual[i].x(), vy) > 0.03 || std::abs(actual[i].z()) > 0.05)) {
                 result.failure = "completed robot moved after certified stop";
                 return finish();

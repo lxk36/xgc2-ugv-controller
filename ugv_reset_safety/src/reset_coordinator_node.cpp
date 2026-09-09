@@ -548,7 +548,7 @@ class Coordinator {
                 rejectActive("Reset batch membership changed before arrival");
                 return;
             }
-            if (completed_[i] && ((robots[i].position - targets[i].position).norm() > 0.05 ||
+            if (completed_[i] && (!withinTargetTolerance(robots[i], targets[i]) ||
                                   entries_[i]->measured_speed > 0.03 ||
                                   std::abs(entries_[i]->measured_omega) > 0.05)) {
                 rejectActive("completed Reset member moved; stop fleet and retry");

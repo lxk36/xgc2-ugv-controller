@@ -160,6 +160,58 @@ TEST(SafetyFilter, VelocityAndSlewAreSolvedTogetherInBodyFrame) {
     EXPECT_NEAR(result.commands[0].z(), 0.13, 1.0e-6);
 }
 
+TEST(SafetyFilter, PublishedMixedCommandsRespectStrictPhysicalAndSlewBoxes) {
+    for (const double sign : {-1.0, 1.0}) {
+        for (const double demand : {0.6, 1.0, 3.0, 8.0}) {
+            for (const bool slew_limited : {false, true}) {
+                std::vector<Robot> values{robot("scout"), robot("mecanum")};
+                values[0].position.x() = -5.0;
+                values[1].position.x() = 5.0;
+                values[1].type = RobotType::Mecanum;
+                const auto cfg = config();
+                for (auto& value : values) {
+                    value.limits.max_vx = 0.35;
+                    value.limits.max_vy = 0.35;
+                    value.limits.max_omega = 0.5;
+                    value.nominal = sign * Eigen::Vector3d(demand, -demand, demand);
+                    if (slew_limited) {
+                        value.previous = sign * Eigen::Vector3d(0.1, -0.1, 0.2);
+                        value.limits.accel_vx = 0.35;
+                        value.limits.accel_vy = 0.35;
+                        value.limits.accel_omega = 0.6;
+                    }
+                    if (value.type == RobotType::Unicycle) {
+                        value.previous.y() = 0.0;
+                    }
+                }
+                const auto result = solveSafetyFilter(values, {}, noFence(), cfg);
+                ASSERT_TRUE(result.ok()) << result.detail;
+                for (std::size_t i = 0; i < values.size(); ++i) {
+                    const auto& value = values[i];
+                    const Eigen::Vector3d caps(
+                        value.limits.max_vx,
+                        value.type == RobotType::Unicycle ? 0.0 : value.limits.max_vy,
+                        value.limits.max_omega);
+                    const Eigen::Vector3d acceleration(value.limits.accel_vx, value.limits.accel_vy,
+                                                       value.limits.accel_omega);
+                    for (int axis = 0; axis < 3; ++axis) {
+                        const double lower = std::max(
+                            -caps[axis], value.previous[axis] - acceleration[axis] * cfg.dt);
+                        const double upper = std::min(
+                            caps[axis], value.previous[axis] + acceleration[axis] * cfg.dt);
+                        EXPECT_GE(result.commands[i][axis], lower);
+                        EXPECT_LE(result.commands[i][axis], upper);
+                    }
+                    if (!slew_limited) {
+                        EXPECT_NEAR(result.commands[i].z(), sign * 0.5, 1.0e-6);
+                    }
+                }
+                EXPECT_DOUBLE_EQ(result.commands[0].y(), 0.0);
+            }
+        }
+    }
+}
+
 TEST(SafetyFilter, InsufficientBrakingIsExplicitlyInfeasible) {
     Robot value = robot();
     value.previous.x() = 0.4;

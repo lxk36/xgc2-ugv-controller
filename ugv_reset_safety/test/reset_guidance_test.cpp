@@ -2,6 +2,7 @@
 #include <ugv_reset_safety/reset_guidance.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <random>
@@ -96,6 +97,9 @@ TEST(ResetGuidance, BothModelsConvergeFromVariedPositionsAndHeadings) {
                 }
                 ASSERT_TRUE(reached);
                 EXPECT_LE((target.position - robot.position).norm(), 0.05);
+                if (type == RobotType::Mecanum) {
+                    EXPECT_LE(std::abs(angle(target.yaw - robot.yaw)), 0.05);
+                }
             }
         }
     }
@@ -197,7 +201,7 @@ TEST(ResetGuidance, IncompatibleHeadingDoesNotCreateATurnaroundLoop) {
     EXPECT_NE(result.message.find("heading is unconstrained"), std::string::npos);
 }
 
-TEST(ResetGuidance, YawUsesShortestAngleAndXyArrivalDoesNotRequireFinalRotation) {
+TEST(ResetGuidance, MecanumKeepsShortestYawFeedbackAfterXyArrival) {
     Robot robot = makeRobot(RobotType::Mecanum);
     robot.yaw = kPi - 0.1;
     ResetTarget target;
@@ -210,8 +214,154 @@ TEST(ResetGuidance, YawUsesShortestAngleAndXyArrivalDoesNotRequireFinalRotation)
     robot.position = target.position;
     robot.yaw = 0.0;
     const auto final = guidance.step(robot);
-    EXPECT_EQ(final.status, GuidanceStatus::Reached);
-    EXPECT_TRUE(final.nominal.isZero());
+    EXPECT_EQ(final.status, GuidanceStatus::Moving);
+    EXPECT_TRUE(final.nominal.head<2>().isZero());
+    EXPECT_LT(final.nominal.z(), 0.0);
+    robot.yaw = target.yaw;
+    EXPECT_EQ(guidance.step(robot).status, GuidanceStatus::Reached);
+    EXPECT_TRUE(guidance.step(robot).nominal.isZero());
+}
+
+TEST(ResetGuidance, MecanumAtGoalHeadingSweepsIncludePiAndWrapCrossings) {
+    for (double initial_yaw : {-kPi, -kPi + 0.02, -0.1, 0.0, 0.1, kPi - 0.02, kPi}) {
+        for (double target_yaw : {-kPi + 0.02, -0.4, 0.0, kPi - 0.02}) {
+            SCOPED_TRACE(::testing::Message()
+                         << "initial=" << initial_yaw << " target=" << target_yaw);
+            Robot robot = makeRobot(RobotType::Mecanum);
+            robot.yaw = initial_yaw;
+            ResetTarget target;
+            target.yaw = target_yaw;
+            ResetGuidance guidance;
+            auto result = guidance.setGoal(robot, target, {}, Fence());
+            double expected = angle(target_yaw - initial_yaw);
+            if (std::abs(std::abs(expected) - kPi) < 1e-12) {
+                expected = kPi;
+            }
+            if (std::abs(expected) > 0.05) {
+                ASSERT_EQ(result.status, GuidanceStatus::Moving);
+                EXPECT_GT(expected * result.nominal.z(), 0.0);
+            }
+            for (int step = 0; step < 1000 && result.status != GuidanceStatus::Reached; ++step) {
+                expectBounded(robot, result.nominal);
+                EXPECT_TRUE(result.nominal.head<2>().isZero());
+                integrate(&robot, result.nominal, 0.02);
+                result = guidance.step(robot);
+            }
+            EXPECT_EQ(result.status, GuidanceStatus::Reached);
+            EXPECT_LE(std::abs(angle(target_yaw - robot.yaw)), 0.05);
+            EXPECT_TRUE(robot.position.isZero());
+        }
+    }
+}
+
+TEST(ResetGuidance, MecanumHeadingToleranceIsConfigurableAndValidated) {
+    Robot robot = makeRobot(RobotType::Mecanum);
+    ResetTarget target;
+    target.yaw = 0.15;
+    EXPECT_EQ(ResetGuidance().setGoal(robot, target, {}, Fence()).status, GuidanceStatus::Moving);
+    GuidanceOptions options;
+    options.mecanum_yaw_tolerance = 0.2;
+    EXPECT_TRUE(withinTargetTolerance(robot, target, options));
+    EXPECT_EQ(ResetGuidance(options).setGoal(robot, target, {}, Fence()).status,
+              GuidanceStatus::Reached);
+    for (double invalid : {0.0, -0.1, kPi + 0.1, std::numeric_limits<double>::infinity()}) {
+        options.mecanum_yaw_tolerance = invalid;
+        EXPECT_EQ(ResetGuidance(options).setGoal(robot, target, {}, Fence()).status,
+                  GuidanceStatus::InvalidInput);
+    }
+    robot.type = RobotType::Unicycle;
+    EXPECT_TRUE(withinTargetTolerance(robot, target));
+}
+
+TEST(ResetGuidance, MecanumNearGoalHoldsWorldPositionWhileTurning) {
+    Robot robot = makeRobot(RobotType::Mecanum);
+    robot.position = {0.03, -0.02};
+    robot.yaw = kPi / 2.0;
+    ResetTarget target;
+    ResetGuidance guidance;
+    const auto result = guidance.setGoal(robot, target, {}, Fence());
+    ASSERT_EQ(result.status, GuidanceStatus::Moving);
+    const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
+    const Eigen::Vector2d world_velocity(c * result.nominal.x() - s * result.nominal.y(),
+                                         s * result.nominal.x() + c * result.nominal.y());
+    EXPECT_LT((world_velocity - 0.7 * (target.position - robot.position)).norm(), 1e-12);
+    EXPECT_LT(result.nominal.z(), 0.0);
+}
+
+TEST(ResetGuidance, MecanumXyAndYawConvergeThroughCbfWithoutCornerCollision) {
+    // The close wall case starts exactly at goal XY, but requires a 90-degree
+    // rotation. The covering-disk barrier must consider moving body corners;
+    // the safety QP may translate the chassis slightly while aligning yaw.
+    for (bool at_goal : {false, true}) {
+        Robot robot = makeRobot(RobotType::Mecanum);
+        robot.position = at_goal ? Eigen::Vector2d::Zero() : Eigen::Vector2d(-1.4, -0.6);
+        robot.yaw = kPi / 2.0;
+        robot.limits.max_vx = robot.limits.max_vy = 0.35;
+        robot.limits.max_omega = 0.5;
+        robot.limits.accel_vx = robot.limits.accel_vy = 0.35;
+        robot.limits.accel_omega = 0.6;
+        const double wall_x = at_goal ? 0.425 : 0.8;
+        const std::vector<ConvexObstacle> obstacles{box(wall_x, 1.6, -2.0, 2.0)};
+        Fence fence;
+        fence.xmin = -2.5;
+        fence.xmax = 2.0;
+        fence.ymin = -2.5;
+        fence.ymax = 2.5;
+        ResetTarget target;
+        ResetGuidance guidance;
+        ASSERT_EQ(guidance.setGoal(robot, target, obstacles, fence).status, GuidanceStatus::Moving);
+        FilterConfig config;
+        config.dt = 0.02;
+        config.clearance = 0.08;
+        config.uncertainty_margin = 0.02;
+        bool reached = false, barrier_limited = false;
+        for (int step = 0; step < 4500; ++step) {
+            const auto desired = guidance.step(robot);
+            robot.nominal = desired.nominal;
+            const auto filtered = solveSafetyFilter({robot}, obstacles, fence, config);
+            ASSERT_TRUE(filtered.ok())
+                << "at_goal=" << at_goal << " step=" << step << " " << filtered.detail;
+            ASSERT_GE(filtered.min_clearance, -1e-6);
+            const auto command = filtered.commands.front();
+            expectBounded(robot, command);
+            EXPECT_LE(std::abs(command.x() - robot.previous.x()), 0.02 * 0.35 + 1e-6);
+            EXPECT_LE(std::abs(command.y() - robot.previous.y()), 0.02 * 0.35 + 1e-6);
+            EXPECT_LE(std::abs(command.z() - robot.previous.z()), 0.02 * 0.6 + 1e-6);
+            // In the at-goal case the nominal XY is zero initially; translation
+            // away from the wall demonstrates that rotational barriers engage.
+            barrier_limited = barrier_limited || (at_goal && robot.position.x() < -0.005);
+            robot.previous = command;
+            for (int substep = 0; substep < 10; ++substep) {
+                integrate(&robot, command, 0.002);
+                const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
+                for (const auto& corner : std::array<Eigen::Vector2d, 4>{
+                         Eigen::Vector2d(-robot.half_length, -robot.half_width),
+                         Eigen::Vector2d(robot.half_length, -robot.half_width),
+                         Eigen::Vector2d(robot.half_length, robot.half_width),
+                         Eigen::Vector2d(-robot.half_length, robot.half_width)}) {
+                    const Eigen::Vector2d body = corner + robot.body_center_offset;
+                    const Eigen::Vector2d world =
+                        robot.position +
+                        Eigen::Vector2d(c * body.x() - s * body.y(), s * body.x() + c * body.y());
+                    ASSERT_GT(wall_x - world.x(), config.clearance);
+                    ASSERT_GT(world.x() - fence.xmin, config.clearance);
+                    ASSERT_GT(world.y() - fence.ymin, config.clearance);
+                    ASSERT_GT(fence.ymax - world.y(), config.clearance);
+                }
+            }
+            if (desired.status == GuidanceStatus::Reached && command.norm() < 1e-3) {
+                reached = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(reached) << "at_goal=" << at_goal << " XY=" << robot.position.transpose()
+                             << " yaw=" << robot.yaw;
+        EXPECT_LE(robot.position.norm(), 0.05);
+        EXPECT_LE(std::abs(angle(robot.yaw - target.yaw)), 0.05);
+        if (at_goal) {
+            EXPECT_TRUE(barrier_limited);
+        }
+    }
 }
 
 TEST(ResetGuidance, VisibilityGraphRoutesAroundBlockingBox) {

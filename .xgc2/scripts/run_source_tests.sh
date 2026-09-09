@@ -23,7 +23,9 @@ PYTHONPATH="$work_dir/src/xgc2-ugv-controller/mecanum_ugv_controller/tools" \
   python3 -B -m unittest discover \
     -s "$work_dir/src/xgc2-ugv-controller/mecanum_ugv_controller/tools/holonomic_tracker/tests" \
     -v
-catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}"
+# Exercise the optimized control loop used by runtime, retaining debug symbols
+# for failures. The separate C++ quality job still builds the Debug profile.
+catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}" -DCMAKE_BUILD_TYPE=RelWithDebInfo
 source devel/setup.bash
 catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}" \
   run_tests_unicycle_reference_trajectory \

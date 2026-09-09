@@ -18,6 +18,8 @@ struct GuidanceOptions {
     double heading_gain = 2.0;
     double terminal_yaw_gain = 1.5;
     double position_tolerance = 0.05;
+    // Mecanum can hold XY while aligning yaw; Scout arrival remains XY only.
+    double mecanum_yaw_tolerance = 0.05;
     double waypoint_tolerance = 0.015;
     // Arc-length carrot on the polyline; reserve half this distance in the
     // inflated geometry for turn anticipation. CBF remains the safety layer.
@@ -45,6 +47,11 @@ struct VisibilityPath {
     std::vector<Eigen::Vector2d> points;
     std::string message;
 };
+
+// Goal geometry only; arrival still requires a measured stop and a zero
+// command certified by the safety filter before releasing a Reset session.
+bool withinTargetTolerance(const Robot& robot, const ResetTarget& target,
+                           const GuidanceOptions& options = GuidanceOptions());
 
 // Visibility graph and Dijkstra on convex polygons expanded by a circumscribed
 // disk. Polygon input must be cyclically ordered and convex (either winding).

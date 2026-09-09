@@ -12,8 +12,9 @@ Provide each owner an explicit world-frame `geometry_msgs/Pose2D` on
 Missing targets do not default to the shared world origin. Updating a target
 caches it; only the existing `reset` command enters Reset. Each session freezes
 its target. Completion requires XY error at most 0.05 m, measured low speed,
-and an exact zero command checked by the safety QP;
-there is no added terminal yaw gate. Timeout or Stop also returns Ready, so
+and an exact zero command checked by the safety QP. Mecanum additionally requires
+wrapped yaw error at most 0.05 rad; Scout keeps position-only completion.
+Timeout or Stop also returns Ready, so
 Ready alone is not evidence of arrival.
 
 ```bash
@@ -69,6 +70,11 @@ Mecanum computes nominal world XY velocity and rotates it into body FLU using
 the current canonical pose yaw. It simultaneously applies wrapped shortest-angle
 feedback to the requested yaw. Body `vx`, `vy`, and yaw rate are independent QP
 variables; a nonzero heading does not corrupt world-frame translation.
+When already within the XY tolerance, it continues world-position hold and
+shortest-angle yaw feedback until both errors meet their tolerances. The public
+`GuidanceOptions::mecanum_yaw_tolerance` sets the yaw tolerance; its default is
+0.05 rad. Rotating body corners remain subject to the same CBF constraints, which
+may require a small translation while turning.
 
 Scout commands only body `vx` and yaw rate (`vy` is always zero). Its nominal
 polar law follows a fixed reverse direction during Reset. With reverse-bearing
@@ -158,7 +164,10 @@ Commands update at 20 ms; physical rectangle clearance is checked at 2 ms plant
 substeps. The four-Scout exchanges take about four minutes (236–245 s), including
 waiting for the other pair. These finite fixtures do not establish convergence
 for arbitrary initial layouts, larger occupancy cycles, unmodelled obstacles,
-or physical robots. Terminal yaw is reported but is not an arrival criterion.
+or physical robots. Scout terminal yaw is reported but is not an arrival
+criterion. Focused Mecanum tests also cover heading-only resets, wrapped-angle
+sweeps, and simultaneous XY/yaw convergence through the CBF while checking
+physical rectangle corners at 2 ms intervals.
 
 The visibility graph follows [LaValle, Planning Algorithms §6.2.4](https://msl.cs.illinois.edu/~lavalle/planning/node271.html).
 The CBF-QP construction follows the framework in

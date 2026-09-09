@@ -373,15 +373,20 @@ FilterResult solveSafetyFilter(const std::vector<Robot>& robots,
     if (!solution.allFinite()) {
         return fail(Status::ResidualViolation, "non-finite solver output");
     }
-    // Fixed zero channels are a protocol contract, not a floating-point
-    // approximation. Check every original inequality after canonicalization;
-    // a zero that breaks a barrier or slew bound is never reported as safe.
-    for (std::size_t i = 0; i < robots.size(); ++i) {
-        if (!robots[i].active || robots[i].stop_requested) {
-            solution.segment<3>(3 * i).setZero();
-        } else if (robots[i].type == RobotType::Unicycle) {
-            solution[3 * i + 1] = 0.0;
+    // The first n rows are the exact componentwise velocity/slew intersections,
+    // including fixed zero channels. Native owners require strict box bounds.
+    // Correct only tolerance-sized solver residue, then check every original
+    // inequality on these exact published values; projection can alter a CBF.
+    for (Eigen::Index i = 0; i < n; ++i) {
+        const auto& bounds = constraints[static_cast<std::size_t>(i)];
+        const double bounded = std::clamp(solution[i], bounds.lower, bounds.upper);
+        const double correction = std::abs(solution[i] - bounded);
+        if (correction > config.feasibility_tolerance) {
+            result.max_constraint_violation = correction;
+            return fail(Status::ResidualViolation,
+                        "solver output exceeds a velocity or slew box beyond tolerance");
         }
+        solution[i] = bounded;
     }
     result.max_constraint_violation = 0.0;
     for (const auto& constraint : constraints) {

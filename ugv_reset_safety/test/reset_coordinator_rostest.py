@@ -74,7 +74,9 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             time.sleep(0.01)
         with self.lock:
             self.assertTrue(condition(), message + "; state=" + str(self.state) +
-                            "; last response=" + (self.responses[-1].reason if self.responses else "none"))
+                            "; pose=" + str(self.pose) + "; command=" + str(self.command) +
+                            "; last responses=" + str([(r.generation, r.status, r.reason,
+                              r.command.angular.z) for r in self.responses[-5:]]))
 
     def on_command(self, msg):
         with self.lock:
@@ -134,8 +136,11 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
     def reset(self):
         with self.lock:
             count = len(self.requests)
+            previous_generation = self.requests[-1].generation if self.requests else None
         self.command_pub.publish(String(data="reset"))
-        self.wait(lambda: len(self.requests) > count, 2.0, "Reset must emit an explicit request")
+        self.wait(lambda: len(self.requests) > count and
+                  self.requests[-1].generation != previous_generation,
+                  2.0, "Reset must emit a request for a new generation")
         with self.lock:
             return self.requests[-1].generation
 
@@ -215,6 +220,27 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             self.assertTrue(all(all(math.isfinite(v) for v in c) for c in self.commands))
             self.assertTrue(all(abs(c[0]) <= self.max_vx + 1e-9 and abs(c[1]) <= self.max_vy + 1e-9 and
                                 abs(c[2]) <= 0.5 + 1e-9 for c in self.commands))
+
+        if not self.scout:
+            # XY arrival must not suppress the Mecanum's independent heading
+            # control. Keep the actual position and request only a yaw change.
+            with self.lock:
+                turn_x, turn_y, turn_yaw = self.pose
+            turn_goal = turn_yaw + 1.0
+            self.goal_pub.publish(Pose2D(x=turn_x, y=turn_y, theta=turn_goal))
+            time.sleep(0.2)
+            generation = self.reset()
+            self.wait(lambda: self.command[2] > 0.015, 3.0,
+                      "Mecanum at target XY must still turn toward its target yaw")
+            self.wait(lambda: self.state == 2 and any(r.generation == generation and
+                      r.status == ResetResponse.ARRIVED for r in self.responses),
+                      12.0, "heading-only Mecanum Reset must arrive and stop")
+            with self.lock:
+                yaw_error = math.atan2(math.sin(turn_goal - self.pose[2]),
+                                       math.cos(turn_goal - self.pose[2]))
+                self.assertLessEqual(abs(yaw_error), 0.055)
+                self.assertLessEqual(math.hypot(self.pose[0] - turn_x, self.pose[1] - turn_y), 0.055)
+                self.assertTrue(self.stopped())
 
         # Unsupported scene geometry and a valid geometric revision must both
         # terminate the active generation, including delayed RUNNING replays.

@@ -41,9 +41,10 @@ bool validOptions(const GuidanceOptions& options) {
            std::isfinite(options.heading_gain) && options.heading_gain > options.position_gain &&
            std::isfinite(options.terminal_yaw_gain) && options.terminal_yaw_gain > 0.0 &&
            std::isfinite(options.position_tolerance) && options.position_tolerance > 0.0 &&
-           std::isfinite(options.waypoint_tolerance) && options.waypoint_tolerance > 0.0 &&
-           std::isfinite(options.lookahead_distance) && options.lookahead_distance > 0.0 &&
-           std::isfinite(options.terminal_approach_distance) &&
+           std::isfinite(options.mecanum_yaw_tolerance) && options.mecanum_yaw_tolerance > 0.0 &&
+           options.mecanum_yaw_tolerance <= kPi && std::isfinite(options.waypoint_tolerance) &&
+           options.waypoint_tolerance > 0.0 && std::isfinite(options.lookahead_distance) &&
+           options.lookahead_distance > 0.0 && std::isfinite(options.terminal_approach_distance) &&
            options.terminal_approach_distance > 0.0 && std::isfinite(options.path_clearance) &&
            options.path_clearance > 2.0 * options.waypoint_tolerance;
 }
@@ -283,6 +284,13 @@ VisibilityPath planVisibilityPath(const Eigen::Vector2d& start, const Eigen::Vec
 
 ResetGuidance::ResetGuidance(const GuidanceOptions& options) : options_(options) {}
 
+bool withinTargetTolerance(const Robot& robot, const ResetTarget& target,
+                           const GuidanceOptions& options) {
+    return (target.position - robot.position).norm() <= options.position_tolerance &&
+           (robot.type != RobotType::Mecanum ||
+            std::abs(wrap(target.yaw - robot.yaw)) <= options.mecanum_yaw_tolerance);
+}
+
 void ResetGuidance::clear() {
     path_.clear();
     waypoint_ = 0;
@@ -306,7 +314,7 @@ GuidanceResult ResetGuidance::setGoal(const Robot& robot, const ResetTarget& tar
     if ((target_.position - robot.position).norm() <= options_.position_tolerance) {
         path_ = {robot.position, target_.position};
         waypoint_ = 1;
-        status_ = GuidanceStatus::Reached;
+        status_ = GuidanceStatus::Moving;
         chooseDirection(robot);
         return step(robot);
     }
@@ -420,10 +428,10 @@ GuidanceResult ResetGuidance::step(const Robot& robot) {
         }
         ++waypoint_;
     }
-    // The reset completion contract is XY tolerance. Do not add a final
-    // rotate-in-place maneuver: an offset/slipping pose point can translate
-    // while turning and create a perpetual position/yaw correction cycle.
-    if (goal_distance <= options_.position_tolerance) {
+    // Scout keeps its position-only arrival condition: turning its offset pose
+    // point can restart a position/yaw correction cycle. Mecanum instead has
+    // independent XY channels to hold the target while aligning the heading.
+    if (withinTargetTolerance(robot, target_, options_)) {
         status_ = GuidanceStatus::Reached;
         result.status = status_;
         return result;
@@ -448,6 +456,9 @@ GuidanceResult ResetGuidance::step(const Robot& robot) {
         }
         carrot = path_[vertex];
         remaining -= length;
+    }
+    if (robot.type == RobotType::Mecanum && goal_distance <= options_.position_tolerance) {
+        carrot = target_.position;
     }
     const Eigen::Vector2d error = carrot - robot.position;
     const double distance = error.norm();
