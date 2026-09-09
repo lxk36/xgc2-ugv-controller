@@ -11,6 +11,7 @@ ROS_PACKAGES=(
   unicycle_reference_trajectory
   unicycle_ugv_controller
   mecanum_ugv_controller
+  ugv_reset_safety
 )
 
 product_version() {
@@ -77,6 +78,7 @@ copy_ros_package() {
   copy_path "${PREFIX_ROOT}/share/${ros_package}" "${pkg_root}"
   copy_path "${PREFIX_ROOT}/lib/${ros_package}" "${pkg_root}"
   copy_path "${PREFIX_ROOT}/include/${ros_package}" "${pkg_root}"
+  copy_path "${PREFIX_ROOT}/lib/pkgconfig/${ros_package}.pc" "${pkg_root}"
   copy_path "${PREFIX_ROOT}/share/common-lisp/ros/${ros_package}" "${pkg_root}"
   copy_path "${PREFIX_ROOT}/share/gennodejs/ros/${ros_package}" "${pkg_root}"
   copy_path "${PREFIX_ROOT}/share/roseus/ros/${ros_package}" "${pkg_root}"
@@ -88,6 +90,7 @@ for ros_package in "${ROS_PACKAGES[@]}"; do
   copy_ros_package "${ros_package}"
 done
 copy_path "${PREFIX_ROOT}/lib/libunicycle_ugv_controller_nmpc_runtime.so" "${pkg_root}"
+copy_path "${PREFIX_ROOT}/lib/libugv_reset_safety_math.so" "${pkg_root}"
 
 mkdir -p "${pkg_root}/DEBIAN" "${pkg_root}/usr/share/doc/${PACKAGE}"
 cat > "${pkg_root}/DEBIAN/control" <<EOF
@@ -97,7 +100,7 @@ Section: misc
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: XGC2 <apt@example.com>
-Depends: libeigen3-dev, libxgc2-state-machine-dev (>= 0.1.3-4~focal), libxgc2-math-dev (>= 0.5.6-6~focal), xgc2-acados (>= 0.1.0-10~focal), ros-${ROS_DISTRO}-xgc2-ros1-utils (>= 1.1.1-3), ros-${ROS_DISTRO}-xgc2-estimator-rigid-state-msgs (>= 1.2.0-3), ros-${ROS_DISTRO}-xgc2-unicycle-reference-trajectory-msgs (>= 1.3.0-13), ros-${ROS_DISTRO}-message-runtime, ros-${ROS_DISTRO}-roscpp, ros-${ROS_DISTRO}-rospy, ros-${ROS_DISTRO}-std-msgs, ros-${ROS_DISTRO}-geometry-msgs, ros-${ROS_DISTRO}-nav-msgs
+Depends: libeigen3-dev, libxgc2-state-machine-dev (>= 0.1.3-4~focal), libxgc2-math-dev (>= 0.5.6-6~focal), xgc2-acados (>= 0.1.0-10~focal), ros-${ROS_DISTRO}-xgc2-ros1-utils (>= 1.1.1-3), ros-${ROS_DISTRO}-xgc2-estimator-rigid-state-msgs (>= 1.2.0-3), ros-${ROS_DISTRO}-xgc2-unicycle-reference-trajectory-msgs (>= 1.3.0-13), ros-${ROS_DISTRO}-xgc2-geometry-msgs, ros-${ROS_DISTRO}-message-runtime, ros-${ROS_DISTRO}-roscpp, ros-${ROS_DISTRO}-rospy, ros-${ROS_DISTRO}-std-msgs, ros-${ROS_DISTRO}-geometry-msgs, ros-${ROS_DISTRO}-nav-msgs
 Replaces: ros-${ROS_DISTRO}-xgc2-controller (<< 1.3.2-1)
 Breaks: ros-${ROS_DISTRO}-xgc2-controller (<< 1.3.2-1)
 Description: XGC2 ROS1 UGV controller and reference trajectory packages

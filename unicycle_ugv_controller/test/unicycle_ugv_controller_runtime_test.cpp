@@ -167,21 +167,6 @@ TEST(UnicycleSm, ResetDoesNotJumpToCustom1) {
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
 }
 
-TEST(UnicycleSm, ResetArrivesAtFiveCmWithoutYawGate) {
-    ros::Time::init();
-    UgvState state;
-    UnicycleUgvController controller(state);
-    goReadyPose(controller, state, 1.0);
-    ResetTarget goal;
-    goal.valid = true;
-    controller.setResetTarget(goal);
-    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
-    setPose(state, 1.01, 0.03, -0.02, 0.8);
-    controller.update(1.01);
-    controller.update(1.012);
-    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
-}
-
 TEST(UnicycleSm, ResetTimeoutReturnsReady) {
     ros::Time::init();
     UgvState state;
@@ -356,105 +341,6 @@ TEST(UnicycleLaw, PvaDoesNotValidateAlgorithmTimestamp) {
     reference.stamp = ros::Time(1001.0);
     EXPECT_TRUE(worldPvaReady(reference));
     EXPECT_TRUE(liftWorldPva(reference, 1.0).valid);
-}
-
-TEST(UnicycleLaw, ResetPlanIsBezierNotSequentialRail) {
-    UgvState state;
-    state.x = 0.0;
-    state.y = 0.0;
-    state.yaw = 0.0;
-    ResetTarget goal;
-    goal.x = 2.0;
-    goal.y = 0.0;
-    goal.yaw = 0.0;
-    goal.valid = true;
-    const UnicycleBezierPlan plan = planUnicycleReset(state, goal, ControllerConfig{});
-    ASSERT_TRUE(plan.valid);
-    EXPECT_FALSE(plan.already_arrived);
-    EXPECT_GT(plan.T, 0.0);
-    UnicycleResetSample mid;
-    ASSERT_TRUE(sampleUnicycleReset(plan, 0.5 * plan.T, mid));
-    EXPECT_GT(mid.x, 0.0);
-    EXPECT_LT(mid.x, 2.0);
-}
-
-TEST(UnicycleLaw, ResetTrackArrivesAtFiveCm) {
-    UgvState near;
-    near.x = 0.03;
-    near.y = -0.02;
-    near.yaw = 1.2;
-    ResetTarget goal;
-    goal.valid = true;
-    const UnicycleBezierPlan plan = planUnicycleReset(near, goal, ControllerConfig{});
-    EXPECT_TRUE(plan.already_arrived);
-    const UnicycleResetOutput output = trackUnicycleReset(near, plan, 0.0, ControllerConfig{});
-    EXPECT_TRUE(output.position_ok);
-}
-
-TEST(UnicycleLaw, ResetPlanRandomRelativePosesStayInBox) {
-    std::mt19937 rng(20260904);
-    std::uniform_real_distribution<double> dist_dist(0.06, 6.0);
-    std::uniform_real_distribution<double> angle(-3.14159265358979323846, 3.14159265358979323846);
-    ControllerConfig config;
-    int failures = 0;
-    for (int i = 0; i < 200; ++i) {
-        const double dist = dist_dist(rng);
-        const double bearing = angle(rng);
-        UgvState state;
-        state.x = dist * std::cos(bearing);
-        state.y = dist * std::sin(bearing);
-        state.yaw = angle(rng);
-        ResetTarget goal;
-        goal.yaw = angle(rng);
-        goal.valid = true;
-        const UnicycleBezierPlan plan = planUnicycleReset(state, goal, config);
-        if (!plan.valid && !plan.already_arrived) {
-            ++failures;
-            continue;
-        }
-        for (int k = 0; k <= 48; ++k) {
-            UnicycleResetSample sample;
-            const double t = plan.already_arrived ? 0.0 : plan.T * static_cast<double>(k) / 48.0;
-            if (!sampleUnicycleReset(plan, t, sample) && !plan.already_arrived) {
-                continue;
-            }
-            EXPECT_LE(std::fabs(sample.linear_speed), config.chassis_max_linear_speed + 1.0e-6);
-            EXPECT_LE(std::fabs(sample.angular_speed), config.chassis_max_yaw_rate + 1.0e-6);
-        }
-    }
-    EXPECT_EQ(failures, 0);
-}
-
-TEST(UnicycleLaw, IdealPlantResetConverges) {
-    ros::Time::init();
-    UgvState state;
-    UnicycleUgvController controller(state);
-    auto config = controller.config();
-    config.state_source = StateSource::PLATFORM_POSE;
-    config.command_publish_rate_hz = 500.0;
-    controller.setConfig(config);
-    goReadyPose(controller, state, 1.0);
-    ResetTarget goal;
-    goal.valid = true;
-    controller.setResetTarget(goal);
-    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
-    setPose(state, 1.01, 1.2, -0.8, 0.7);
-    controller.update(1.01);
-    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
-    double t = 1.01;
-    const double dt = 0.02;
-    bool arrived = false;
-    for (int i = 0; i < 400; ++i) {
-        t += dt;
-        stepUnicyclePlant(state, controller.command(), dt);
-        controller.update(t);
-        if (controller.stateMachine().currentState(region_type::CONTROL) == state_type::Ready) {
-            arrived = true;
-            break;
-        }
-    }
-    EXPECT_TRUE(arrived);
-    EXPECT_LE(std::hypot(state.x, state.y), 0.05 + 1.0e-3);
 }
 
 TEST(UnicycleUgvControllerRuntime, StateFreshRejectsExcessivelyFutureStamp) {
@@ -707,4 +593,115 @@ TEST(UnicycleUgvControllerRuntime, NmpcSolverRejectsInvalidWeights) {
 }
 
 }  // namespace
+
+TEST(UnicycleSm, ResetHasNoUnfilteredFallbackAndCancelsLateResponses) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    goReadyPose(controller, state, 1.0);
+    ResetTarget goal;
+    goal.x = 1.0;
+    goal.valid = true;
+    controller.setResetTarget(goal);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    EXPECT_DOUBLE_EQ(controller.command().linear_speed, 0.0);
+    auto& session = controller.resetSession();
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    const auto issued = session.issue({0.0, 0.0, 0.0}, ros::Time(1.012).toNSec(), wall);
+    ASSERT_TRUE(issued.valid);
+    ASSERT_TRUE(
+        session.accept(issued.generation, issued.stamp, 0, {0.1, 0.0, 0.0}, issued.stamp, wall));
+    controller.update(1.014);
+    EXPECT_DOUBLE_EQ(controller.command().linear_speed, 0.1);
+    postCommand(controller, event_type::STOP_REQUESTED, 1.016);
+    controller.update(1.016);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
+    EXPECT_FALSE(session.active());
+    EXPECT_FALSE(
+        session.accept(issued.generation, issued.stamp, 0, {0.1, 0.0, 0.0}, issued.stamp, wall));
+    EXPECT_DOUBLE_EQ(controller.command().linear_speed, 0.0);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.018);
+    controller.update(1.018);
+    EXPECT_GT(session.generation(), issued.generation);
+    EXPECT_FALSE(
+        session.accept(issued.generation, issued.stamp, 0, {0.1, 0.0, 0.0}, issued.stamp, wall));
+}
+
+TEST(UnicycleSm, ResetRequiresCoordinatorArrivalEvenAtTarget) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    goReadyPose(controller, state, 1.0);
+    ResetTarget goal;
+    goal.valid = true;
+    controller.setResetTarget(goal);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    auto& session = controller.resetSession();
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    const auto issued = session.issue({0.0, 0.0, 0.0}, ros::Time(1.012).toNSec(), wall);
+    ASSERT_TRUE(session.accept(issued.generation, issued.stamp, 1, {}, issued.stamp, wall));
+    controller.update(1.014);
+    controller.update(1.016);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
+    EXPECT_FALSE(session.active());
+}
+
+TEST(UnicycleSm, ResetRejectionReturnsReadyAndAcceptsFreshRetry) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    goReadyPose(controller, state, 1.0);
+    ResetTarget goal;
+    goal.x = 1.0;
+    goal.valid = true;
+    controller.setResetTarget(goal);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    auto& session = controller.resetSession();
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    const auto rejected = session.issue({0.0, 0.0, 0.0}, ros::Time(1.012).toNSec(), wall);
+    ASSERT_TRUE(rejected.valid);
+    ASSERT_TRUE(session.accept(rejected.generation, rejected.stamp,
+                               ugv_reset_safety::ResetSession::REJECTED, {}, rejected.stamp, wall));
+    setPose(state, 1.014, 0.0, 0.0, 0.0);
+    controller.update(1.014);
+    controller.update(1.016);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
+    EXPECT_TRUE(controller.healthReady());
+    EXPECT_FALSE(session.active());
+    EXPECT_DOUBLE_EQ(controller.command().linear_speed, 0.0);
+    EXPECT_DOUBLE_EQ(controller.command().angular_speed, 0.0);
+
+    // Health remains ready throughout: retry must not need a new HEALTH_READY edge.
+    setPose(state, 1.018, 0.0, 0.0, 0.0);
+    controller.update(1.018);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.02);
+    setPose(state, 1.02, 0.0, 0.0, 0.0);
+    controller.update(1.02);
+    controller.update(1.022);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    ASSERT_TRUE(session.active());
+    EXPECT_GT(session.generation(), rejected.generation);
+    const auto retry = session.issue({0.0, 0.0, 0.0}, ros::Time(1.022).toNSec(), wall);
+    ASSERT_TRUE(retry.valid);
+    EXPECT_FALSE(session.accept(rejected.generation, rejected.stamp,
+                                ugv_reset_safety::ResetSession::REJECTED, {}, retry.stamp, wall));
+    ASSERT_TRUE(session.accept(retry.generation, retry.stamp,
+                               ugv_reset_safety::ResetSession::RUNNING, {-0.1, 0.0, 0.0},
+                               retry.stamp, wall));
+    controller.update(1.024);
+    EXPECT_DOUBLE_EQ(controller.command().linear_speed, -0.1);
+}
 }  // namespace unicycle_ugv_controller

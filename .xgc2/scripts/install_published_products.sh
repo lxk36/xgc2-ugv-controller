@@ -20,4 +20,5 @@ apt-get install -y --no-install-recommends \
   xgc2-acados \
   "ros-${ROS_DISTRO}-xgc2-estimator-rigid-state-msgs" \
   "ros-${ROS_DISTRO}-xgc2-unicycle-reference-trajectory-msgs" \
-  "ros-${ROS_DISTRO}-xgc2-ros1-utils"
+  "ros-${ROS_DISTRO}-xgc2-ros1-utils" \
+  "ros-${ROS_DISTRO}-xgc2-geometry-msgs"

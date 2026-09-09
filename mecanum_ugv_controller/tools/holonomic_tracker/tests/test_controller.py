@@ -5,7 +5,6 @@ import unittest
 from holonomic_tracker.controller import (
     box_saturate,
     heading_rate_to_target,
-    reset_command,
     track_command,
     world_velocity_to_body,
     wrap_angle,
@@ -44,9 +43,6 @@ class HolonomicTrackerTests(unittest.TestCase):
         self.assertAlmostEqual(output.linear_x, 1.0)
         self.assertAlmostEqual(output.linear_y, 1.0)
 
-    def test_reset_arrives_within_five_cm(self) -> None:
-        output = reset_command(0.02, -0.03, 0.4, 0.0, 0.0, 0.0)
-        self.assertTrue(output.position_ok)
 
     def test_wrap_angle_is_principal_value(self) -> None:
         self.assertAlmostEqual(wrap_angle(math.pi + 0.1), -math.pi + 0.1, places=6)

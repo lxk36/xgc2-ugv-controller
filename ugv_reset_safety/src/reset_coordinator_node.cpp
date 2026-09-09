@@ -1,0 +1,674 @@
+#include <geometry_msgs/PoseStamped.h>
+#include <ros/ros.h>
+#include <std_msgs/UInt32.h>
+#include <ugv_reset_safety/ResetRequest.h>
+#include <ugv_reset_safety/ResetResponse.h>
+#include <ugv_reset_safety/fleet_guidance.h>
+#include <ugv_reset_safety/fleet_schedule.h>
+#include <ugv_reset_safety/reset_guidance.h>
+#include <xgc2_geometry_msgs/ConvexBodyArray.h>
+#include <xgc2_geometry_msgs/GeometryLibrary.h>
+
+#include <Eigen/Geometry>
+#include <algorithm>
+#include <cmath>
+#include <map>
+#include <memory>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace ugv_reset_safety {
+namespace {
+double number(const XmlRpc::XmlRpcValue& v, const std::string& key) {
+    if (!v.hasMember(key)) {
+        throw std::invalid_argument("missing fleet field: " + key);
+    }
+    const auto& a = v[key];
+    double result;
+    if (a.getType() == XmlRpc::XmlRpcValue::TypeDouble) {
+        result = static_cast<double>(a);
+    } else if (a.getType() == XmlRpc::XmlRpcValue::TypeInt) {
+        result = static_cast<int>(a);
+    } else {
+        throw std::invalid_argument("numeric fleet field required: " + key);
+    }
+    if (!std::isfinite(result)) {
+        throw std::invalid_argument("nonfinite fleet field: " + key);
+    }
+    return result;
+}
+double cross(const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+    return a.x() * b.y() - a.y() * b.x();
+}
+std::vector<Eigen::Vector2d> hull(std::vector<Eigen::Vector2d> points) {
+    std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
+        return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y());
+    });
+    points.erase(std::unique(points.begin(), points.end(),
+                             [](const auto& a, const auto& b) { return (a - b).norm() < 1e-10; }),
+                 points.end());
+    if (points.size() < 3) {
+        throw std::invalid_argument("degenerate obstacle projection");
+    }
+    std::vector<Eigen::Vector2d> h;
+    for (const auto& p : points) {
+        while (h.size() > 1 && cross(h.back() - h[h.size() - 2], p - h.back()) <= 0) {
+            h.pop_back();
+        }
+        h.push_back(p);
+    }
+    const auto lower = h.size();
+    for (auto it = points.rbegin() + 1; it != points.rend(); ++it) {
+        while (h.size() > lower && cross(h.back() - h[h.size() - 2], *it - h.back()) <= 0) {
+            h.pop_back();
+        }
+        h.push_back(*it);
+    }
+    h.pop_back();
+    return h;
+}
+Eigen::Quaterniond quaternion(const geometry_msgs::Quaternion& q) {
+    Eigen::Quaterniond r(q.w, q.x, q.y, q.z);
+    if (!r.coeffs().allFinite() || !std::isfinite(r.norm()) || r.norm() < 1e-6) {
+        throw std::invalid_argument("invalid quaternion");
+    }
+    r.normalize();
+    return r;
+}
+double yaw(const Eigen::Quaterniond& q) {
+    const auto r = q.toRotationMatrix();
+    return std::atan2(r(1, 0), r(0, 0));
+}
+bool finitePose(const geometry_msgs::Pose2D& p) {
+    return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.theta);
+}
+}  // namespace
+
+class Coordinator {
+    struct Entry {
+        Robot robot;
+        ResetGuidance guidance;
+        ros::Subscriber request_sub, pose_sub, state_sub;
+        ros::Publisher response_pub;
+        ResetRequest request;
+        ros::WallTime request_wall, pose_wall, state_wall;
+        ros::Time pose_stamp;
+        Eigen::Vector2d measured_position = Eigen::Vector2d::Zero();
+        double measured_yaw = 0, measured_speed = 0, measured_omega = 0;
+        bool have_pose = false, have_request = false, have_generation = false, planned = false,
+             rejected = false;
+        uint32_t generation = 0, state = 0;
+        geometry_msgs::Pose2D frozen_target;
+        std::string reason;
+    };
+
+   public:
+    Coordinator() : private_("~") {
+        private_.param("frequency", frequency_, 50.0);
+        private_.param("input_timeout", timeout_, 0.15);
+        private_.param("world_frame", world_frame_, std::string("world"));
+        private_.param("geometry_library_topic", library_topic_,
+                       std::string("/xgc2_geometry/geometry_library"));
+        private_.param("obstacle_instances_topic", instances_topic_,
+                       std::string("/xgc2_geometry/static_body_instances"));
+        private_.param("clearance", filter_.clearance, 0.08);
+        private_.param("uncertainty_margin", filter_.uncertainty_margin, 0.03);
+        private_.param("barrier_gain", filter_.barrier_gain, 1.0);
+        private_.param("velocity_uncertainty", filter_.velocity_uncertainty, 0.0);
+        fence_.enabled = true;
+        if (!private_.getParam("fence/x_min", fence_.xmin) ||
+            !private_.getParam("fence/x_max", fence_.xmax) ||
+            !private_.getParam("fence/y_min", fence_.ymin) ||
+            !private_.getParam("fence/y_max", fence_.ymax)) {
+            throw std::invalid_argument("explicit fence required");
+        }
+        if (!std::isfinite(frequency_) || frequency_ < 10 || !std::isfinite(timeout_) ||
+            timeout_ <= 0 || timeout_ > 0.5) {
+            throw std::invalid_argument("invalid timing configuration");
+        }
+        XmlRpc::XmlRpcValue roster;
+        if (!private_.getParam("robots", roster) ||
+            roster.getType() != XmlRpc::XmlRpcValue::TypeArray || roster.size() < 1) {
+            throw std::invalid_argument("explicit complete robots roster required");
+        }
+        std::set<std::string> ids;
+        for (int i = 0; i < roster.size(); ++i) {
+            const auto& r = roster[i];
+            auto e = std::make_unique<Entry>();
+            e->robot.id = static_cast<std::string>(r["namespace"]);
+            if (e->robot.id.empty() || e->robot.id.find("..") != std::string::npos ||
+                !ids.insert(e->robot.id).second) {
+                throw std::invalid_argument("invalid or duplicate robot namespace");
+            }
+            const std::string type = static_cast<std::string>(r["type"]);
+            if (type == "scout") {
+                e->robot.type = RobotType::Unicycle;
+            } else if (type == "mecanum") {
+                e->robot.type = RobotType::Mecanum;
+            } else {
+                throw std::invalid_argument("unknown robot type");
+            }
+            e->robot.lateral_velocity_per_yaw_bound = number(r, "lateral_velocity_per_yaw_bound");
+            e->robot.half_length = number(r, "length") / 2;
+            e->robot.half_width = number(r, "width") / 2;
+            e->robot.body_center_offset = {number(r, "body_offset_x"), number(r, "body_offset_y")};
+            e->robot.limits.max_vx = number(r, "max_vx");
+            e->robot.limits.max_vy = number(r, "max_vy");
+            e->robot.limits.max_omega = number(r, "max_omega");
+            e->robot.limits.accel_vx = number(r, "accel_vx");
+            e->robot.limits.accel_vy = number(r, "accel_vy");
+            e->robot.limits.accel_omega = number(r, "accel_omega");
+            if (e->robot.half_length <= 0 || e->robot.half_width <= 0) {
+                throw std::invalid_argument("nonpositive robot footprint");
+            }
+            const std::size_t n = entries_.size();
+            const std::string ns = "/" + e->robot.id;
+            e->response_pub = nh_.advertise<ResetResponse>(ns + "/reset/response", 1);
+            e->request_sub = nh_.subscribe<ResetRequest>(
+                ns + "/reset/request", 1,
+                [this, n](const ResetRequest::ConstPtr& m) { request(n, *m); });
+            e->pose_sub = nh_.subscribe<geometry_msgs::PoseStamped>(
+                ns + "/pose", 1,
+                [this, n](const geometry_msgs::PoseStamped::ConstPtr& m) { pose(n, *m); });
+            e->state_sub = nh_.subscribe<std_msgs::UInt32>(
+                ns + (e->robot.type == RobotType::Unicycle
+                          ? "/alg/unicycle_ugv_controller/status/control_state"
+                          : "/alg/mecanum_ugv_controller/status/control_state"),
+                1, [this, n](const std_msgs::UInt32::ConstPtr& m) {
+                    entries_[n]->state = m->data;
+                    entries_[n]->state_wall = ros::WallTime::now();
+                });
+            entries_.push_back(std::move(e));
+        }
+        library_sub_ = nh_.subscribe(library_topic_, 1, &Coordinator::library, this);
+        instances_sub_ = nh_.subscribe(instances_topic_, 1, &Coordinator::instances, this);
+    }
+    void run() {
+        ros::WallRate rate(frequency_);
+        last_tick_ = ros::WallTime::now();
+        last_ros_tick_ = ros::Time::now();
+        while (ros::ok()) {
+            ros::spinOnce();
+            tick();
+            rate.sleep();
+        }
+    }
+
+   private:
+    void request(std::size_t n, const ResetRequest& r) {
+        auto& e = *entries_[n];
+        const auto now = ros::Time::now();
+        if (r.header.stamp.isZero() || r.pose_stamp.isZero() || !finitePose(r.pose) ||
+            !finitePose(r.target) || (now - r.header.stamp).toSec() < 0 ||
+            (now - r.header.stamp).toSec() > timeout_ || (now - r.pose_stamp).toSec() < 0 ||
+            (now - r.pose_stamp).toSec() > timeout_) {
+            return;
+        }
+        const auto& a = r.applied_command;
+        Eigen::Vector3d applied(a.linear.x, a.linear.y, a.angular.z);
+        if (!applied.allFinite() || a.linear.z != 0 || a.angular.x != 0 || a.angular.y != 0 ||
+            (e.robot.type == RobotType::Unicycle && a.linear.y != 0)) {
+            return;
+        }
+        if (r.header.frame_id != world_frame_ || r.applied_stamp.isZero() ||
+            r.applied_stamp > r.header.stamp || (now - r.applied_stamp).toSec() > timeout_) {
+            return;
+        }
+        if (std::abs(applied.x()) > e.robot.limits.max_vx + 1e-6 ||
+            std::abs(applied.y()) > e.robot.limits.max_vy + 1e-6 ||
+            std::abs(applied.z()) > e.robot.limits.max_omega + 1e-6) {
+            return;
+        }
+        if (e.have_request && r.header.stamp <= e.request.header.stamp) {
+            return;
+        }
+        if (!e.have_generation || r.generation != e.generation) {
+            // Session identifiers are monotonically increasing within an owner.
+            // Wall expiration alone never resets the command/rate state.
+            e.generation = r.generation;
+            e.have_generation = true;
+            e.planned = false;
+            e.rejected = false;
+            e.reason.clear();
+            e.frozen_target = r.target;
+            e.guidance.clear();
+            passing_.clear();
+            schedule_ready_ = false;
+            schedule_.clear();
+            scheduled_requested_.clear();
+            selected_.clear();
+            completed_.assign(entries_.size(), false);
+            last_admission_ = ros::WallTime::now();
+            for (const auto& peer : entries_) {
+                if (peer.get() != &e && peer->state == 5 &&
+                    (peer->measured_speed > 0.03 || std::abs(peer->measured_omega) > 0.05 ||
+                     peer->robot.previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance)) {
+                    e.rejected = true;
+                    e.reason = "new Reset member joined a moving batch; stop fleet and retry";
+                }
+            }
+            const auto wall = ros::WallTime::now();
+            if (!e.have_pose || (wall - e.pose_wall).toSec() > timeout_ ||
+                (now - e.pose_stamp).toSec() < 0 || (now - e.pose_stamp).toSec() > timeout_ ||
+                (wall - e.state_wall).toSec() > timeout_ ||
+                (e.state != 1 && e.state != 2 && e.state != 5) || e.measured_speed > 0.03 ||
+                std::abs(e.measured_omega) > 0.05 ||
+                applied.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance) {
+                e.rejected = true;
+                e.reason = "reset requires measured stationary start";
+            } else {
+                e.robot.previous.setZero();
+            }
+        }
+        if (r.target.x != e.frozen_target.x || r.target.y != e.frozen_target.y ||
+            r.target.theta != e.frozen_target.theta) {
+            e.rejected = true;
+            e.reason = "target changed inside reset session";
+        }
+        e.robot.previous = applied;
+        e.request = r;
+        e.have_request = true;
+        e.request_wall = ros::WallTime::now();
+    }
+    void pose(std::size_t n, const geometry_msgs::PoseStamped& p) {
+        auto& e = *entries_[n];
+        try {
+            if (p.header.frame_id != world_frame_ || p.header.stamp.isZero() ||
+                !std::isfinite(p.pose.position.x) || !std::isfinite(p.pose.position.y) ||
+                p.header.stamp > ros::Time::now()) {
+                return;
+            }
+            const auto heading = yaw(quaternion(p.pose.orientation));
+            Eigen::Vector2d position(p.pose.position.x, p.pose.position.y);
+            if (e.have_pose) {
+                const double dt = (p.header.stamp - e.pose_stamp).toSec();
+                if (dt <= 0) {
+                    return;
+                }
+                e.measured_speed =
+                    dt <= timeout_ ? (position - e.measured_position).norm() / dt : 1e9;
+                e.measured_omega = dt > timeout_ ? 1e9
+                                                 : std::atan2(std::sin(heading - e.measured_yaw),
+                                                              std::cos(heading - e.measured_yaw)) /
+                                                       dt;
+            } else {
+                e.measured_speed = 1e9;
+                e.measured_omega = 1e9;
+            }
+            e.measured_position = position;
+            e.measured_yaw = heading;
+            e.pose_stamp = p.header.stamp;
+            e.pose_wall = ros::WallTime::now();
+            e.have_pose = true;
+        } catch (const std::exception& ex) {
+            ROS_WARN_THROTTLE(2, "Reset pose rejected: %s", ex.what());
+        }
+    }
+    void library(const xgc2_geometry_msgs::GeometryLibrary::ConstPtr& m) {
+        library_ = *m;
+        have_library_ = true;
+        rebuildScene();
+    }
+    void instances(const xgc2_geometry_msgs::ConvexBodyArray::ConstPtr& m) {
+        instances_ = *m;
+        have_instances_ = true;
+        rebuildScene();
+    }
+    void rebuildScene() {
+        scene_valid_ = false;
+        if (!have_library_ || !have_instances_) {
+            return;
+        }
+        try {
+            if (library_.header.frame_id != world_frame_ ||
+                instances_.header.frame_id != world_frame_) {
+                throw std::invalid_argument("scene frame mismatch");
+            }
+            std::map<std::string, xgc2_geometry_msgs::GeometryTemplate> templates;
+            for (const auto& t : library_.templates) {
+                if (!templates.emplace(t.type, t).second) {
+                    throw std::invalid_argument("duplicate geometry template");
+                }
+            }
+            std::vector<ConvexObstacle> scene;
+            std::set<int> ids;
+            for (const auto& body : instances_.instances) {
+                if (!ids.insert(body.id).second || !body.is_static) {
+                    throw std::invalid_argument("duplicate or dynamic obstacle");
+                }
+                if (body.velocity.linear.x != 0 || body.velocity.linear.y != 0 ||
+                    body.velocity.linear.z != 0 || body.velocity.angular.x != 0 ||
+                    body.velocity.angular.y != 0 || body.velocity.angular.z != 0) {
+                    throw std::invalid_argument(
+                        "moving obstacle unsupported in static reset scene");
+                }
+                const auto it = templates.find(body.geometry_type);
+                if (it == templates.end()) {
+                    throw std::invalid_argument("missing geometry template");
+                }
+                Eigen::Vector3d scale(body.scale.x, body.scale.y, body.scale.z),
+                    origin(body.pose.position.x, body.pose.position.y, body.pose.position.z);
+                if (!scale.allFinite() || !origin.allFinite() || scale.minCoeff() <= 0) {
+                    throw std::invalid_argument("invalid obstacle transform");
+                }
+                const auto rotation = quaternion(body.pose.orientation);
+                std::vector<Eigen::Vector3d> local;
+                Eigen::Vector3d extent;
+                if (body.geometry_type == "cube") {
+                    extent = {.5, .5, .5};
+                } else if (body.geometry_type == "sphere") {
+                    extent = {1, 1, 1};
+                } else if (body.geometry_type == "cylinder") {
+                    extent = {1, 1, .5};
+                } else {
+                    const bool poly = body.geometry_type.find("polytope") != std::string::npos ||
+                                      body.geometry_type.find("mesh") != std::string::npos;
+                    if (!poly) {
+                        throw std::invalid_argument("unsupported obstacle geometry: " +
+                                                    body.geometry_type);
+                    }
+                    for (const auto& p : it->second.support_points) {
+                        local.emplace_back(p.x, p.y, p.z);
+                    }
+                    if (local.size() < 4) {
+                        throw std::invalid_argument("incomplete polytope vertices");
+                    }
+                }
+                if (local.empty()) {
+                    for (int x : {-1, 1}) {
+                        for (int y : {-1, 1}) {
+                            for (int z : {-1, 1}) {
+                                local.emplace_back(x * extent.x(), y * extent.y(), z * extent.z());
+                            }
+                        }
+                    }
+                }
+                std::vector<Eigen::Vector2d> projected;
+                for (const auto& p : local) {
+                    if (!p.allFinite()) {
+                        throw std::invalid_argument("nonfinite obstacle vertex");
+                    }
+                    const Eigen::Vector3d world = origin + rotation * scale.cwiseProduct(p);
+                    if (!world.allFinite()) {
+                        throw std::invalid_argument("obstacle projection overflow");
+                    }
+                    projected.push_back(world.head<2>());
+                }
+                scene.push_back({std::to_string(body.id), hull(projected)});
+            }
+            std::sort(scene.begin(), scene.end(),
+                      [](const auto& a, const auto& b) { return a.id < b.id; });
+            bool changed = scene.size() != obstacles_.size();
+            if (!changed) {
+                for (std::size_t i = 0; i < scene.size(); ++i) {
+                    if (scene[i].id != obstacles_[i].id ||
+                        scene[i].vertices.size() != obstacles_[i].vertices.size()) {
+                        changed = true;
+                        break;
+                    }
+                    for (std::size_t j = 0; j < scene[i].vertices.size(); ++j) {
+                        if ((scene[i].vertices[j] - obstacles_[i].vertices[j]).norm() > 1e-10) {
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            obstacles_ = std::move(scene);
+            scene_valid_ = true;
+            scene_error_.clear();
+            for (auto& e : entries_) {
+                if (changed && e->have_request) {
+                    e->rejected = true;
+                    e->reason = "scene changed; request a new reset after stopping";
+                }
+            }
+        } catch (const std::exception& e) {
+            scene_error_ = e.what();
+            ROS_WARN("Reset scene rejected: %s", e.what());
+        }
+    }
+    void reply(Entry& e, uint8_t status, const Eigen::Vector3d& command,
+               const std::string& reason) {
+        ResetResponse r;
+        r.header = e.request.header;
+        r.generation = e.request.generation;
+        r.status = status;
+        r.reason = reason;
+        r.command.linear.x = command.x();
+        r.command.linear.y = command.y();
+        r.command.angular.z = command.z();
+        e.response_pub.publish(r);
+    }
+    void rejectActive(const std::string& reason) {
+        for (auto& e : entries_) {
+            if (e->have_request && e->robot.active) {
+                e->rejected = true;
+                e->reason = reason;
+                reply(*e, ResetResponse::REJECTED, Eigen::Vector3d::Zero(), reason);
+            }
+        }
+    }
+    void tick() {
+        const auto wall = ros::WallTime::now();
+        const auto now = ros::Time::now();
+        const double wall_dt = (wall - last_tick_).toSec();
+        last_tick_ = wall;
+        const double dt = (now - last_ros_tick_).toSec();
+        last_ros_tick_ = now;
+        bool active = false;
+        for (auto& e : entries_) {
+            e->robot.active =
+                e->have_request && (wall - e->request_wall).toSec() <= timeout_ && e->state == 5;
+            active = active || e->robot.active;
+        }
+        if (!active) {
+            return;
+        }
+        if (!scene_valid_) {
+            rejectActive("scene unavailable: " + scene_error_);
+            return;
+        }
+        if (dt <= 0 || dt > timeout_ || wall_dt <= 0 || wall_dt > timeout_) {
+            rejectActive("coordinator deadline missed");
+            return;
+        }
+        for (auto& e : entries_) {
+            if (!e->have_pose || (wall - e->pose_wall).toSec() > timeout_ ||
+                (now - e->pose_stamp).toSec() < 0 || (now - e->pose_stamp).toSec() > timeout_ ||
+                (wall - e->state_wall).toSec() > timeout_) {
+                rejectActive("fleet pose/state unavailable");
+                return;
+            }
+            if (e->state != 1 && e->state != 2 && e->state != 5) {
+                rejectActive("fleet member is outside reset/stop states");
+                return;
+            }
+            if (!e->robot.active &&
+                (e->measured_speed > 0.03 || std::abs(e->measured_omega) > 0.05)) {
+                rejectActive("uncontrolled moving fleet member");
+                return;
+            }
+            e->robot.position = e->measured_position;
+            e->robot.yaw = e->measured_yaw;
+            // Inactive peers must be measured stopped before their slew state can reset.
+            if (!e->robot.active) {
+                e->robot.previous.setZero();
+            }
+            if (e->robot.active && e->rejected) {
+                rejectActive(e->reason);
+                return;
+            }
+        }
+        // Collect a command fan-out while everyone remains stopped. A member
+        // joining an already moving batch is rejected in request().
+        if ((wall - last_admission_).toSec() < timeout_) {
+            for (auto& e : entries_) {
+                if (e->robot.active) {
+                    reply(*e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
+                          "collecting reset batch");
+                }
+            }
+            return;
+        }
+        std::vector<Robot> robots;
+        std::vector<ResetTarget> targets;
+        std::vector<bool> requested;
+        for (const auto& e : entries_) {
+            robots.push_back(e->robot);
+            ResetTarget target;
+            target.position = {e->frozen_target.x, e->frozen_target.y};
+            target.yaw = e->frozen_target.theta;
+            targets.push_back(target);
+            requested.push_back(e->robot.active);
+        }
+        if (!schedule_ready_) {
+            for (const auto& entry : entries_) {
+                if (entry->measured_speed > 0.03 || std::abs(entry->measured_omega) > 0.05 ||
+                    entry->robot.previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance) {
+                    rejectActive("Reset batch must remain stopped during admission");
+                    return;
+                }
+            }
+            schedule_ = FleetSchedule(filter_.clearance + filter_.uncertainty_margin);
+            const auto initialized = schedule_.initialize(robots, targets);
+            if (!initialized.ok()) {
+                rejectActive("reset schedule: " + initialized.detail);
+                return;
+            }
+            scheduled_requested_ = requested;
+            completed_.assign(robots.size(), false);
+            selected_.assign(robots.size(), false);
+            schedule_ready_ = true;
+        }
+        for (std::size_t i = 0; i < robots.size(); ++i) {
+            if (scheduled_requested_[i] != requested[i] && !completed_[i]) {
+                rejectActive("Reset batch membership changed before arrival");
+                return;
+            }
+            if (completed_[i] && ((robots[i].position - targets[i].position).norm() > 0.05 ||
+                                  entries_[i]->measured_speed > 0.03 ||
+                                  std::abs(entries_[i]->measured_omega) > 0.05)) {
+                rejectActive("completed Reset member moved; stop fleet and retry");
+                return;
+            }
+        }
+        const auto group = schedule_.select(completed_);
+        if (!group.ok()) {
+            rejectActive("reset schedule: " + group.detail);
+            return;
+        }
+        std::vector<bool> selected(robots.size(), false);
+        for (const auto i : group.selected) {
+            selected[i] = true;
+        }
+        if (selected != selected_) {
+            selected_ = selected;
+            passing_.clear();
+            for (auto& e : entries_) {
+                e->planned = false;
+            }
+        }
+        auto guidance_obstacles = obstacles_;
+        const auto parked = parkedPeerObstacles(robots, selected);
+        guidance_obstacles.insert(guidance_obstacles.end(), parked.begin(), parked.end());
+        std::vector<GuidanceStatus> statuses(robots.size(), GuidanceStatus::Uninitialized);
+        for (std::size_t i = 0; i < robots.size(); ++i) {
+            auto& e = *entries_[i];
+            // Nonselected owners remain in Reset but receive an exact zero.
+            // They are stationary obstacles in the QP, not free actuators.
+            if (!selected[i] &&
+                (e.measured_speed > 0.03 || std::abs(e.measured_omega) > 0.05 ||
+                 robots[i].previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance)) {
+                rejectActive("parked Reset member is moving");
+                return;
+            }
+            robots[i].active = selected[i];
+            robots[i].stop_requested = false;
+            robots[i].nominal.setZero();
+            if (!selected[i]) {
+                continue;
+            }
+            if (!e.planned) {
+                const auto planned =
+                    e.guidance.setGoal(robots[i], targets[i], guidance_obstacles, fence_);
+                if (planned.status == GuidanceStatus::InvalidInput ||
+                    planned.status == GuidanceStatus::NoRoute) {
+                    rejectActive(planned.message);
+                    return;
+                }
+                e.planned = true;
+            }
+            const auto g = e.guidance.step(robots[i]);
+            if (g.status == GuidanceStatus::InvalidInput || g.status == GuidanceStatus::NoRoute) {
+                rejectActive(g.message);
+                return;
+            }
+            robots[i].nominal = g.nominal;
+            statuses[i] = g.status;
+            robots[i].stop_requested =
+                g.status == GuidanceStatus::Reached &&
+                robots[i].previous.cwiseAbs().maxCoeff() <= filter_.feasibility_tolerance &&
+                e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
+        }
+        passing_.apply(robots, guidance_obstacles, fence_, filter_);
+        filter_.dt = dt;
+        const auto filtered = solveSafetyFilter(robots, obstacles_, fence_, filter_);
+        if (!filtered.ok()) {
+            rejectActive("safety filter: " + filtered.detail);
+            return;
+        }
+        if ((ros::WallTime::now() - wall).toSec() > 1.0 / frequency_) {
+            rejectActive("safety solve deadline missed");
+            return;
+        }
+        for (std::size_t i = 0; i < entries_.size(); ++i) {
+            auto& e = *entries_[i];
+            if (!e.robot.active) {
+                continue;
+            }
+            const bool arrived =
+                robots[i].stop_requested && filtered.commands[i].isZero(0.0) &&
+                e.robot.previous.cwiseAbs().maxCoeff() <= filter_.feasibility_tolerance &&
+                e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
+            if (arrived || completed_[i]) {
+                completed_[i] = true;
+                reply(e, ResetResponse::ARRIVED, Eigen::Vector3d::Zero(), "");
+            } else {
+                reply(e, ResetResponse::RUNNING, filtered.commands[i], "");
+            }
+        }
+    }
+    ros::NodeHandle nh_, private_;
+    std::vector<std::unique_ptr<Entry>> entries_;
+    ros::Subscriber library_sub_, instances_sub_;
+    xgc2_geometry_msgs::GeometryLibrary library_;
+    xgc2_geometry_msgs::ConvexBodyArray instances_;
+    bool have_library_ = false, have_instances_ = false, scene_valid_ = false;
+    std::string world_frame_, library_topic_, instances_topic_, scene_error_;
+    std::vector<ConvexObstacle> obstacles_;
+    Fence fence_;
+    FilterConfig filter_;
+    FleetGuidance passing_;
+    FleetSchedule schedule_;
+    bool schedule_ready_ = false;
+    std::vector<bool> scheduled_requested_, selected_, completed_;
+    ros::WallTime last_admission_;
+    double frequency_ = 50, timeout_ = .15;
+    ros::WallTime last_tick_;
+    ros::Time last_ros_tick_;
+};
+}  // namespace ugv_reset_safety
+int main(int argc, char** argv) {
+    ros::init(argc, argv, "ugv_reset_coordinator");
+    try {
+        ugv_reset_safety::Coordinator node;
+        node.run();
+    } catch (const std::exception& e) {
+        ROS_FATAL("Reset coordinator startup failed: %s", e.what());
+        return 1;
+    }
+    return 0;
+}

@@ -26,7 +26,6 @@ class CmdVelOutputConsumer final : public ::state_machine::runtime::EventConsume
    private:
     geometry_msgs::Twist makeTwist(const ControlCommand& command) const;
 
-    ::state_machine::runtime::AsyncTaskExecutor<ros::NodeHandle>& executor_;
     UnicycleUgvController& controller_;
     ros::Publisher cmd_vel_pub_;
 };

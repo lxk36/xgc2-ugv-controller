@@ -1,0 +1,40 @@
+# Simulation envelopes; physical execution needs measured residual bounds.
+frequency: 50.0
+input_timeout: 0.15
+world_frame: world
+clearance: 0.08
+uncertainty_margin: 0.05
+barrier_gain: 1.0
+velocity_uncertainty: 0.1
+fence:
+  x_min: -20.0
+  x_max: 20.0
+  y_min: -20.0
+  y_max: 20.0
+robots:
+- namespace: ugv1
+  type: scout
+  length: 0.62
+  width: 0.52
+  body_offset_x: 0.0
+  body_offset_y: 0.0
+  max_vx: 0.35
+  max_vy: 0.0
+  max_omega: 0.5
+  accel_vx: 0.35
+  accel_vy: 0.35
+  accel_omega: 0.6
+  lateral_velocity_per_yaw_bound: 0.25
+- namespace: ugv2
+  type: mecanum
+  length: 0.41
+  width: 0.36
+  body_offset_x: 0.0
+  body_offset_y: 0.0
+  max_vx: 0.35
+  max_vy: 0.35
+  max_omega: 0.5
+  accel_vx: 0.35
+  accel_vy: 0.35
+  accel_omega: 0.6
+  lateral_velocity_per_yaw_bound: 0.0

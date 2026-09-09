@@ -54,6 +54,10 @@ required_files=(
   unicycle_reference_trajectory/package.xml
   unicycle_reference_trajectory/include/unicycle_reference_trajectory/unicycle_reference_trajectory_runtime.h
   unicycle_reference_trajectory/launch/ugv_unicycle_reference_trajectory.launch
+  ugv_reset_safety/CMakeLists.txt
+  ugv_reset_safety/package.xml
+  ugv_reset_safety/launch/ugv_reset_coordinator.launch
+  ugv_reset_safety/config/mixed_pair.yaml
   mecanum_ugv_controller/CMakeLists.txt
   mecanum_ugv_controller/package.xml
   mecanum_ugv_controller/launch/ugv_mecanum_reset_controller.launch
@@ -122,4 +126,6 @@ if grep -R --exclude='check_package_compliance.sh' \
   exit 1
 fi
 
+grep -q "run_tests_ugv_reset_safety" .xgc2/scripts/run_source_tests.sh
+grep -q "ugv_reset_safety" .xgc2/scripts/package_debs.sh
 echo "Package compliance checks passed."

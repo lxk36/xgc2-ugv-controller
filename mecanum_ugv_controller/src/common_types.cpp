@@ -70,25 +70,6 @@ double headingRateToTarget(double yaw, double target_yaw, double kp_yaw, double 
     return clamp(kp_yaw * error, -max_yaw_rate, max_yaw_rate);
 }
 
-HolonomicResetOutput computeHolonomicResetCommand(const UgvState& state, const ResetTarget& goal,
-                                                  const ControllerConfig& config) {
-    HolonomicResetOutput output;
-    if (!goal.valid || !finitePose(state)) {
-        return output;
-    }
-    const double ex = goal.x - state.x;
-    const double ey = goal.y - state.y;
-    const double dist = std::hypot(ex, ey);
-    const double yaw_err = xgc2_math::shortestAngularDistance(state.yaw, goal.yaw);
-    worldVelocityToBody(state.yaw, config.reset_kp_xy * ex, config.reset_kp_xy * ey,
-                        output.linear_x, output.linear_y);
-    output.angular_z = config.reset_kp_yaw * yaw_err;
-    boxSaturateCommand(output.linear_x, output.linear_y, output.angular_z, config.max_linear_speed,
-                       config.max_yaw_rate);
-    output.position_ok = dist <= config.reset_arrive_position;
-    return output;
-}
-
 HolonomicTrackOutput computeHolonomicTrackCommand(const UgvState& state,
                                                   const WorldVelocityReference& reference,
                                                   const ControllerConfig& config) {
@@ -98,9 +79,8 @@ HolonomicTrackOutput computeHolonomicTrackCommand(const UgvState& state,
         return output;
     }
     worldVelocityToBody(state.yaw, reference.vx, reference.vy, output.linear_x, output.linear_y);
-    output.angular_z =
-        headingRateToTarget(state.yaw, config.heading_target_yaw, config.track_kp_yaw,
-                            config.max_yaw_rate);
+    output.angular_z = headingRateToTarget(state.yaw, config.heading_target_yaw,
+                                           config.track_kp_yaw, config.max_yaw_rate);
     boxSaturateCommand(output.linear_x, output.linear_y, output.angular_z, config.max_linear_speed,
                        config.max_yaw_rate);
     return output;

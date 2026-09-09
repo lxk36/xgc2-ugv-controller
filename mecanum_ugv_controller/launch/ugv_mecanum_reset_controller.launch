@@ -8,9 +8,9 @@
     <arg name="cmd_vel_topic" default="cmd_vel"/>
     <arg name="heading_target_yaw" default="0.0"/>
     <arg name="auto_start_tracking" default="false"/>
-    <arg name="reset_initial_x" default="0.0"/>
-    <arg name="reset_initial_y" default="0.0"/>
-    <arg name="reset_initial_yaw" default="0.0"/>
+    <arg name="reset_initial_x" default=""/>
+    <arg name="reset_initial_y" default=""/>
+    <arg name="reset_initial_yaw" default=""/>
     <group ns="$(arg ns)">
         <node pkg="mecanum_ugv_controller"
               type="mecanum_ugv_controller_node"
@@ -23,9 +23,9 @@
             <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)"/>
             <param name="heading_target_yaw" value="$(arg heading_target_yaw)"/>
             <param name="auto_start_tracking" value="$(arg auto_start_tracking)"/>
-            <param name="reset_initial_x" value="$(arg reset_initial_x)"/>
-            <param name="reset_initial_y" value="$(arg reset_initial_y)"/>
-            <param name="reset_initial_yaw" value="$(arg reset_initial_yaw)"/>
+            <param if="$(eval arg('reset_initial_x') != '')" name="reset_initial_x" type="double" value="$(arg reset_initial_x)"/>
+            <param if="$(eval arg('reset_initial_y') != '')" name="reset_initial_y" type="double" value="$(arg reset_initial_y)"/>
+            <param if="$(eval arg('reset_initial_yaw') != '')" name="reset_initial_yaw" type="double" value="$(arg reset_initial_yaw)"/>
         </node>
     </group>
 </launch>

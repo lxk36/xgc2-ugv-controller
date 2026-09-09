@@ -256,8 +256,8 @@ void UnicycleUgvController::setupMachine() {
         .priority(transition_priority::AUTOMATIC);
     builder.transition()
         .from(state_type::Reset)
-        .to(state_type::SelfCheck)
-        .on(event_type::RESET_PLAN_FAILED)
+        .to(state_type::Ready)
+        .on(event_type::RESET_REJECTED)
         .priority(transition_priority::AUTOMATIC);
 
     auto result = builder.build();

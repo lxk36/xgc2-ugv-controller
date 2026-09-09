@@ -28,6 +28,7 @@ class ResetState final : public ::state_machine::State {
     MecanumUgvController& controller_;
     PeriodicGate command_gate_;
     double enter_time_{0.0};
+    double enter_wall_{0.0};
 };
 
 }  // namespace mecanum_ugv_controller

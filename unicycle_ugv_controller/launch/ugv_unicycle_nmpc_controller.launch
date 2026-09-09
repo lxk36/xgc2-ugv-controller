@@ -21,8 +21,10 @@
     <arg name="auto_start_tracking" default="false"/>
     <arg name="platform_pose_topic" default="pose"/>
     <arg name="reset_pose_topic" default="reset_pose"/>
+    <arg name="reset_initial_x" default=""/>
+    <arg name="reset_initial_y" default=""/>
+    <arg name="reset_initial_yaw" default=""/>
     <arg name="reset_timeout" default="45.0"/>
-    <arg name="reset_arrive_position" default="0.05"/>
 
     <arg name="nmpc_control_period" default="0.1"/>
     <arg name="nmpc_prediction_horizon" default="1.0"/>
@@ -73,8 +75,10 @@
             <param name="auto_start_tracking" value="$(arg auto_start_tracking)"/>
             <param name="platform_pose_topic" value="$(arg platform_pose_topic)"/>
             <param name="reset_pose_topic" value="$(arg reset_pose_topic)"/>
+            <param if="$(eval arg('reset_initial_x') != '')" name="reset_initial_x" type="double" value="$(arg reset_initial_x)"/>
+            <param if="$(eval arg('reset_initial_y') != '')" name="reset_initial_y" type="double" value="$(arg reset_initial_y)"/>
+            <param if="$(eval arg('reset_initial_yaw') != '')" name="reset_initial_yaw" type="double" value="$(arg reset_initial_yaw)"/>
             <param name="reset/timeout" value="$(arg reset_timeout)"/>
-            <param name="reset/arrive_position" value="$(arg reset_arrive_position)"/>
             <param name="nmpc/control_period" value="$(arg nmpc_control_period)"/>
             <param name="nmpc/prediction_horizon" value="$(arg nmpc_prediction_horizon)"/>
             <param name="nmpc/request_rate_hz" value="$(arg nmpc_request_rate_hz)"/>

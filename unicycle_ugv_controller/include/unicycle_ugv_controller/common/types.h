@@ -5,6 +5,7 @@
 
 #include <Eigen/Dense>
 #include <cstdint>
+#include <limits>
 #include <state_machine/state_machine.hpp>
 
 namespace unicycle_ugv_controller {
@@ -59,10 +60,7 @@ struct ControllerConfig {
     bool auto_start_tracking{false};
     StateSource state_source{StateSource::STATE_ESTIMATOR};
     TrackingStrategy tracking_strategy{TrackingStrategy::NMPC};
-    double reset_timeout{45.0};
-    double reset_arrive_position{0.05};
-    double reset_kp_along{0.8};
-    double reset_kp_heading{1.2};
+    double reset_timeout{600.0};
     double chassis_max_linear_speed{1.05};
     double chassis_max_yaw_rate{1.05};
     double max_linear_speed{3.0};
@@ -83,9 +81,9 @@ struct ControllerConfig {
     double fence_x_max{20.0};
     double fence_y_min{-20.0};
     double fence_y_max{20.0};
-    double reset_initial_x{0.0};
-    double reset_initial_y{0.0};
-    double reset_initial_yaw{0.0};
+    double reset_initial_x{std::numeric_limits<double>::quiet_NaN()};
+    double reset_initial_y{std::numeric_limits<double>::quiet_NaN()};
+    double reset_initial_yaw{std::numeric_limits<double>::quiet_NaN()};
     NmpcCostWeights nmpc_weights{};
 };
 
@@ -128,37 +126,6 @@ struct WorldPvaReference {
     double ax{0.0};
     double ay{0.0};
     bool valid{false};
-};
-
-struct UnicycleBezierPlan {
-    double p0x{0.0};
-    double p0y{0.0};
-    double p1x{0.0};
-    double p1y{0.0};
-    double p2x{0.0};
-    double p2y{0.0};
-    double p3x{0.0};
-    double p3y{0.0};
-    double T{0.0};
-    bool reverse{false};
-    bool valid{false};
-    bool already_arrived{false};
-    bool fence_failed{false};
-};
-
-struct UnicycleResetSample {
-    double x{0.0};
-    double y{0.0};
-    double yaw{0.0};
-    double linear_speed{0.0};
-    double angular_speed{0.0};
-    bool valid{false};
-};
-
-struct UnicycleResetOutput {
-    double linear_speed{0.0};
-    double angular_speed{0.0};
-    bool position_ok{false};
 };
 
 struct FlatnessCommandOutput {
@@ -217,7 +184,7 @@ constexpr uint32_t HOLD_REQUESTED = STOP_REQUESTED;
 constexpr uint32_t RESET_REQUESTED = 3;
 constexpr uint32_t RESET_ARRIVED = 4;
 constexpr uint32_t RESET_TIMEOUT = 5;
-constexpr uint32_t RESET_PLAN_FAILED = 6;
+constexpr uint32_t RESET_REJECTED = 6;
 constexpr uint32_t INPUT_STATE_UPDATED = 20;
 constexpr uint32_t INPUT_REFERENCE_UPDATED = 21;
 constexpr uint32_t INPUT_NMPC_SOLVE_SUCCEEDED = 23;
@@ -258,13 +225,6 @@ bool updatePoseVelocityEstimator(PoseVelocityEstimator& estimator, double stamp,
 
 WorldPvaReference liftWorldPva(const WorldPvaReference& sample, double now_sec);
 bool worldPvaReady(const WorldPvaReference& sample);
-
-UnicycleBezierPlan planUnicycleReset(const UgvState& state, const ResetTarget& goal,
-                                     const ControllerConfig& config);
-bool sampleUnicycleReset(const UnicycleBezierPlan& plan, double t_along,
-                         UnicycleResetSample& sample);
-UnicycleResetOutput trackUnicycleReset(const UgvState& state, const UnicycleBezierPlan& plan,
-                                       double t_along, const ControllerConfig& config);
 
 FlatnessCommandOutput computeFlatnessCommand(const UgvState& state,
                                              const WorldPvaReference& reference, double body_speed,

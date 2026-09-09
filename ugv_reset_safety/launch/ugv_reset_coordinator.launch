@@ -1,0 +1,10 @@
+<launch>
+  <arg name="fleet_config"/>
+  <arg name="geometry_library_topic" default="/xgc2_geometry/geometry_library"/>
+  <arg name="obstacle_instances_topic" default="/xgc2_geometry/static_body_instances"/>
+  <node pkg="ugv_reset_safety" type="ugv_reset_coordinator_node" name="ugv_reset_coordinator" output="screen" required="true">
+    <rosparam command="load" file="$(arg fleet_config)"/>
+    <param name="geometry_library_topic" value="$(arg geometry_library_topic)"/>
+    <param name="obstacle_instances_topic" value="$(arg obstacle_instances_topic)"/>
+  </node>
+</launch>

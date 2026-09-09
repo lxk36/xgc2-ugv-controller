@@ -4,6 +4,7 @@
 #include <ros/time.h>
 
 #include <cstdint>
+#include <limits>
 #include <state_machine/state_machine.hpp>
 
 namespace mecanum_ugv_controller {
@@ -17,19 +18,16 @@ struct ControllerConfig {
     bool auto_start_tracking{false};
     double heading_target_yaw{0.0};
     double track_kp_yaw{1.2};
-    double reset_timeout{45.0};
-    double reset_arrive_position{0.05};
-    double reset_kp_xy{0.8};
-    double reset_kp_yaw{1.2};
+    double reset_timeout{600.0};
     double max_linear_speed{1.0};  // FLU |vx|, |vy| after R(ψ)^T
     double max_yaw_rate{1.0};      // FLU |ω|
     double fence_x_min{-20.0};     // offset world ENU x
     double fence_x_max{20.0};
     double fence_y_min{-20.0};  // offset world ENU y
     double fence_y_max{20.0};
-    double reset_initial_x{0.0};
-    double reset_initial_y{0.0};
-    double reset_initial_yaw{0.0};
+    double reset_initial_x{std::numeric_limits<double>::quiet_NaN()};
+    double reset_initial_y{std::numeric_limits<double>::quiet_NaN()};
+    double reset_initial_yaw{std::numeric_limits<double>::quiet_NaN()};
 };
 
 struct UgvState {
@@ -62,13 +60,6 @@ struct WorldVelocityReference {
     bool valid{false};
 };
 
-struct HolonomicResetOutput {
-    double linear_x{0.0};
-    double linear_y{0.0};
-    double angular_z{0.0};
-    bool position_ok{false};
-};
-
 struct HolonomicTrackOutput {
     double linear_x{0.0};
     double linear_y{0.0};
@@ -94,6 +85,7 @@ constexpr uint32_t STOP_REQUESTED = 2;
 constexpr uint32_t RESET_REQUESTED = 3;
 constexpr uint32_t RESET_ARRIVED = 4;
 constexpr uint32_t RESET_TIMEOUT = 5;
+constexpr uint32_t RESET_REJECTED = 6;
 constexpr uint32_t INPUT_STATE_UPDATED = 20;
 constexpr uint32_t INPUT_REFERENCE_UPDATED = 21;
 constexpr uint32_t HEALTH_READY = 40;
@@ -121,8 +113,7 @@ void worldVelocityToBody(double yaw, double v_wx, double v_wy, double& v_bx, dou
 void boxSaturateCommand(double& linear_x, double& linear_y, double& angular_z,
                         double max_linear_speed, double max_yaw_rate);
 double headingRateToTarget(double yaw, double target_yaw, double kp_yaw, double max_yaw_rate);
-HolonomicResetOutput computeHolonomicResetCommand(const UgvState& state, const ResetTarget& goal,
-                                                  const ControllerConfig& config);
+
 HolonomicTrackOutput computeHolonomicTrackCommand(const UgvState& state,
                                                   const WorldVelocityReference& reference,
                                                   const ControllerConfig& config);

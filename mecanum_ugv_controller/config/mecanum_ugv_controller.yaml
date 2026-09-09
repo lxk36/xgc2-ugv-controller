@@ -13,10 +13,7 @@ heading_target_yaw: 0.0
 track:
   kp_yaw: 1.2
 reset:
-  timeout: 45.0
-  arrive_position: 0.05
-  kp_xy: 0.8
-  kp_yaw: 1.2
+  timeout: 600.0
 # FLU |vx|,|vy| after R(ψ)^T. Not world ENU reference.
 max_linear_speed: 1.0
 max_yaw_rate: 1.0
@@ -26,6 +23,5 @@ fence:
   x_max: 20.0
   y_min: -20.0
   y_max: 20.0
-reset_initial_x: 0.0
-reset_initial_y: 0.0
-reset_initial_yaw: 0.0
+
+# Reset needs an explicit reset_pose message or all three reset_initial_* params.

@@ -1,0 +1,25 @@
+# Isolated ROS transport / kinematic fixture, not a vehicle dynamics model.
+frequency: 50.0
+input_timeout: 0.15
+world_frame: world
+geometry_library_topic: /reset_fixture/geometry
+obstacle_instances_topic: /reset_fixture/obstacles
+clearance: 0.08
+uncertainty_margin: 0.03
+velocity_uncertainty: 0.0
+barrier_gain: 1.0
+fence: {x_min: -3.0, x_max: 3.0, y_min: -3.0, y_max: 3.0}
+robots:
+  - namespace: reset_fixture_robot
+    type: mecanum
+    length: 0.4
+    width: 0.3
+    lateral_velocity_per_yaw_bound: 0.0
+    body_offset_x: 0.0
+    body_offset_y: 0.0
+    max_vx: 0.4
+    max_vy: 0.4
+    max_omega: 0.5
+    accel_vx: 0.5
+    accel_vy: 0.5
+    accel_omega: 0.7

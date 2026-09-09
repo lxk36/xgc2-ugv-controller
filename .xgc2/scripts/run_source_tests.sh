@@ -28,7 +28,8 @@ source devel/setup.bash
 catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}" \
   run_tests_unicycle_reference_trajectory \
   run_tests_unicycle_ugv_controller \
-  run_tests_mecanum_ugv_controller
+  run_tests_mecanum_ugv_controller \
+  run_tests_ugv_reset_safety
 catkin_test_results
 DESTDIR="$install_root" catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}" install \
   -DCMAKE_INSTALL_PREFIX=/opt/ros/noetic \

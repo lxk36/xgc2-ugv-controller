@@ -74,49 +74,6 @@ void enterCustom1(MecanumUgvController& controller, UgvState& state,
 
 }  // namespace
 
-TEST(MecanumLaw, ResetCommandsBodyVxVyOmegaTogether) {
-    UgvState state;
-    ResetTarget goal;
-    goal.x = 1.0;
-    goal.y = 0.5;
-    goal.yaw = 0.4;
-    goal.valid = true;
-    const HolonomicResetOutput output =
-        computeHolonomicResetCommand(state, goal, ControllerConfig{});
-    EXPECT_GT(output.linear_x, 0.0);
-    EXPECT_GT(output.linear_y, 0.0);
-    EXPECT_GT(output.angular_z, 0.0);
-    EXPECT_FALSE(output.position_ok);
-}
-
-TEST(MecanumLaw, ResetRotatesWorldErrorIntoBody) {
-    UgvState state;
-    state.yaw = 1.5707963267948966;
-    ResetTarget goal;
-    goal.x = 1.0;
-    goal.yaw = 1.5707963267948966;
-    goal.valid = true;
-    const HolonomicResetOutput output =
-        computeHolonomicResetCommand(state, goal, ControllerConfig{});
-    EXPECT_NEAR(output.linear_x, 0.0, 1.0e-6);
-    EXPECT_LT(output.linear_y, 0.0);
-    EXPECT_NEAR(output.angular_z, 0.0, 1.0e-6);
-}
-
-TEST(MecanumLaw, ResetArrivesAtFiveCentimetresNotForty) {
-    UgvState far;
-    far.x = 1.20;
-    far.y = 0.08;
-    ResetTarget goal;
-    goal.x = 1.0;
-    goal.valid = true;
-    EXPECT_FALSE(computeHolonomicResetCommand(far, goal, ControllerConfig{}).position_ok);
-    UgvState near;
-    near.x = 1.03;
-    near.y = 0.02;
-    EXPECT_TRUE(computeHolonomicResetCommand(near, goal, ControllerConfig{}).position_ok);
-}
-
 TEST(MecanumLaw, BoxSaturateClampsEachFluAxis) {
     UgvState state;
     WorldVelocityReference reference;
@@ -342,21 +299,6 @@ TEST(MecanumSm, ResetTimeoutReturnsReady) {
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
 }
 
-TEST(MecanumSm, ResetArrivesAtFiveCm) {
-    ros::Time::init();
-    UgvState state;
-    MecanumUgvController controller(state);
-    goReady(controller, state, 1.0);
-    ResetTarget goal;
-    goal.valid = true;
-    controller.setResetTarget(goal);
-    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
-    setPose(state, 1.01, 0.03, -0.02, 0.4);
-    controller.update(1.01);
-    controller.update(1.012);
-    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
-}
-
 TEST(MecanumSm, InvalidFenceStaysSelfCheck) {
     ros::Time::init();
     UgvState state;
@@ -384,75 +326,6 @@ TEST(MecanumSm, SelfCheckDoesNotJumpToCustom1OrReset) {
     postCommand(controller, event_type::RESET_REQUESTED, 1.02);
     controller.update(1.02);
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::SelfCheck);
-}
-
-TEST(MecanumLaw, IdealPlantResetConvergesFromRelativePoses) {
-    ros::Time::init();
-    const struct {
-        double x;
-        double y;
-        double yaw;
-        const char* name;
-    } initials[] = {
-        {1.2, -0.8, 0.7, "Q4"},
-        {-0.5, 1.4, -2.8, "Q2-wrap"},
-        {0.3, 0.3, 3.0, "near-pi"},
-        {-1.5, -1.2, 0.0, "Q3-yaw0"},
-        {1.0, 0.0, 1.5707963267948966, "east-90"},
-        {0.0, 1.0, -1.5707963267948966, "north-neg90"},
-        {0.06, 0.0, 0.0, "just-outside-5cm"},
-        {2.0, 1.5, -3.0, "far-wrap"},
-        {-0.8, 0.8, 3.1, "Q2-pi"},
-    };
-    for (const auto& initial : initials) {
-        UgvState state;
-        MecanumUgvController controller(state);
-        auto config = controller.config();
-        config.command_publish_rate_hz = 500.0;
-        controller.setConfig(config);
-        goReady(controller, state, 1.0);
-        ResetTarget goal;
-        goal.valid = true;
-        controller.setResetTarget(goal);
-        postCommand(controller, event_type::RESET_REQUESTED, 1.01);
-        setPose(state, 1.01, initial.x, initial.y, initial.yaw);
-        controller.update(1.01);
-        ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset)
-            << initial.name;
-        double t = 1.01;
-        const double dt = 0.02;
-        bool arrived = false;
-        for (int i = 0; i < 400; ++i) {
-            t += dt;
-            stepHolonomicPlant(state, controller.command(), dt);
-            controller.update(t);
-            if (controller.stateMachine().currentState(region_type::CONTROL) == state_type::Ready) {
-                arrived = true;
-                break;
-            }
-        }
-        EXPECT_TRUE(arrived) << initial.name << " x=" << initial.x << " y=" << initial.y;
-        EXPECT_LE(std::hypot(state.x, state.y), 0.05 + 1.0e-3) << initial.name;
-    }
-}
-
-TEST(MecanumLaw, IdealPlantResetYawOnlyArrivesWithoutYawGate) {
-    ros::Time::init();
-    UgvState state;
-    MecanumUgvController controller(state);
-    auto config = controller.config();
-    config.command_publish_rate_hz = 500.0;
-    controller.setConfig(config);
-    goReady(controller, state, 1.0);
-    ResetTarget goal;
-    goal.valid = true;
-    controller.setResetTarget(goal);
-    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
-    setPose(state, 1.01, 0.0, 0.0, 2.5);
-    controller.update(1.01);
-    controller.update(1.012);
-    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
-    EXPECT_LE(std::hypot(state.x, state.y), 0.05);
 }
 
 TEST(MecanumLaw, IdealPlantCustom1HeadingAndWorldVelocity) {
@@ -655,4 +528,64 @@ TEST(MecanumLaw, IdealPlantCustom1SaturatesWorldVelocityOnFluBox) {
     EXPECT_NEAR(vwy, -1.0, 1.0e-9);
 }
 
+TEST(MecanumSm, ResetHasNoUnfilteredFallbackAndCancelsLateResponses) {
+    ros::Time::init();
+    UgvState state;
+    MecanumUgvController controller(state);
+    goReady(controller, state, 1.0);
+    ResetTarget goal;
+    goal.x = 1.0;
+    goal.valid = true;
+    controller.setResetTarget(goal);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    EXPECT_DOUBLE_EQ(controller.command().linear_x, 0.0);
+    EXPECT_DOUBLE_EQ(controller.command().linear_y, 0.0);
+    auto& session = controller.resetSession();
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    const auto issued = session.issue({0.0, 0.0, 0.0}, ros::Time(1.012).toNSec(), wall);
+    ASSERT_TRUE(issued.valid);
+    ASSERT_TRUE(
+        session.accept(issued.generation, issued.stamp, 0, {0.1, 0.0, 0.0}, issued.stamp, wall));
+    controller.update(1.014);
+    EXPECT_DOUBLE_EQ(controller.command().linear_x, 0.1);
+    postCommand(controller, event_type::STOP_REQUESTED, 1.016);
+    controller.update(1.016);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
+    EXPECT_FALSE(session.active());
+    EXPECT_FALSE(
+        session.accept(issued.generation, issued.stamp, 0, {0.1, 0.0, 0.0}, issued.stamp, wall));
+    EXPECT_DOUBLE_EQ(controller.command().linear_x, 0.0);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.018);
+    controller.update(1.018);
+    EXPECT_GT(session.generation(), issued.generation);
+    EXPECT_FALSE(
+        session.accept(issued.generation, issued.stamp, 0, {0.1, 0.0, 0.0}, issued.stamp, wall));
+}
+
+TEST(MecanumSm, ResetRequiresCoordinatorArrivalEvenAtTarget) {
+    ros::Time::init();
+    UgvState state;
+    MecanumUgvController controller(state);
+    goReady(controller, state, 1.0);
+    ResetTarget goal;
+    goal.valid = true;
+    controller.setResetTarget(goal);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    auto& session = controller.resetSession();
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    const auto issued = session.issue({0.0, 0.0, 0.0}, ros::Time(1.012).toNSec(), wall);
+    ASSERT_TRUE(session.accept(issued.generation, issued.stamp, 1, {}, issued.stamp, wall));
+    controller.update(1.014);
+    controller.update(1.016);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
+    EXPECT_FALSE(session.active());
+}
 }  // namespace mecanum_ugv_controller

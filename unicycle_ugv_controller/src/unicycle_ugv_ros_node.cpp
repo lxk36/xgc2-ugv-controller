@@ -21,7 +21,11 @@ double finitePositiveOr(double value, double fallback) {
 }  // namespace
 
 UnicycleUgvRosNode::UnicycleUgvRosNode(ros::NodeHandle& nh)
-    : nh_(nh), private_nh_("~"), controller_(state_), output_executor_(nh_) {
+    : nh_(nh),
+      private_nh_("~"),
+      controller_(state_),
+      reset_client_(nh_, controller_.resetSession()),
+      output_executor_(nh_) {
     loadParams();
     controller_.setConfig(config_);
     seedResetTarget();
@@ -70,7 +74,7 @@ UnicycleUgvRosNode::~UnicycleUgvRosNode() {
 void UnicycleUgvRosNode::run(double frequency_hz) {
     const double frequency = finitePositiveOr(frequency_hz, config_.control_rate_hz);
     ROS_INFO("[UnicycleUgvRosNode] Starting main loop at %.1f Hz", frequency);
-    ros::Rate rate(frequency);
+    ros::WallRate rate(frequency);
     while (ros::ok()) {
         ros::spinOnce();
         updateOnce();
@@ -127,10 +131,6 @@ void UnicycleUgvRosNode::loadParams() {
     private_nh_.param("auto_start_tracking", config_.auto_start_tracking,
                       config_.auto_start_tracking);
     private_nh_.param("reset/timeout", config_.reset_timeout, config_.reset_timeout);
-    private_nh_.param("reset/arrive_position", config_.reset_arrive_position,
-                      config_.reset_arrive_position);
-    private_nh_.param("reset/kp_along", config_.reset_kp_along, config_.reset_kp_along);
-    private_nh_.param("reset/kp_heading", config_.reset_kp_heading, config_.reset_kp_heading);
     private_nh_.param("nmpc/request_rate_hz", config_.nmpc_request_rate_hz,
                       config_.nmpc_request_rate_hz);
     private_nh_.param("limits/max_linear_speed", config_.max_linear_speed,
@@ -231,10 +231,7 @@ void UnicycleUgvRosNode::loadParams() {
     config_.nmpc_weights.terminal_yaw = finitePositiveOr(config_.nmpc_weights.terminal_yaw, 20.0);
     config_.nmpc_weights.terminal_speed =
         finitePositiveOr(config_.nmpc_weights.terminal_speed, 10.0);
-    config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 45.0);
-    config_.reset_arrive_position = finitePositiveOr(config_.reset_arrive_position, 0.05);
-    config_.reset_kp_along = finitePositiveOr(config_.reset_kp_along, 0.8);
-    config_.reset_kp_heading = finitePositiveOr(config_.reset_kp_heading, 1.2);
+    config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 600.0);
     status_publish_rate_hz_ = finitePositiveOr(status_publish_rate_hz_, 10.0);
 }
 
@@ -252,6 +249,7 @@ void UnicycleUgvRosNode::seedResetTarget() {
 void UnicycleUgvRosNode::updateOnce() {
     controller_.update(ros::Time::now().toSec());
     dispatchOutputEvents(controller_.stateMachine().currentOutputEvents());
+    reset_client_.update({state_.x, state_.y, state_.yaw}, state_.stamp, controller_.healthReady());
     const auto control_state = controller_.stateMachine().currentState(region_type::CONTROL);
     const auto health_state = controller_.stateMachine().currentState(region_type::HEALTH);
     logStateChanges(control_state, health_state);

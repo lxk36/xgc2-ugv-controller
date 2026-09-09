@@ -11,7 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   rigid_state_estimator_msgs
   roscpp
   ros1_utils
-  std_msgs
+  std_msgs ugv_reset_safety
   unicycle_reference_trajectory_msgs
 )
 find_package(Eigen3 REQUIRED)
@@ -119,7 +119,7 @@ endif()
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES unicycle_ugv_controller_nmpc_runtime
-  CATKIN_DEPENDS geometry_msgs nav_msgs rigid_state_estimator_msgs roscpp ros1_utils std_msgs
+  CATKIN_DEPENDS geometry_msgs nav_msgs rigid_state_estimator_msgs roscpp ros1_utils std_msgs ugv_reset_safety
                  unicycle_reference_trajectory_msgs
   CFG_EXTRAS unicycle_ugv_controller-dependencies.cmake
 )

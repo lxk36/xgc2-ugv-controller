@@ -10,99 +10,80 @@ namespace unicycle_ugv_controller {
 ResetState::ResetState(UnicycleUgvController& controller) : controller_(controller) {}
 
 ::state_machine::ActionResult ResetState::onEnter(::state_machine::StateContext& ctx) {
-    (void)ctx;
     controller_.clearCommand();
     command_gate_.reset();
     enter_time_ = controller_.currentTime();
-    last_track_time_ = enter_time_;
-    t_along_ = 0.0;
-    have_track_time_ = true;
-    plan_ = UnicycleBezierPlan{};
-    if (!controller_.resetTargetReady()) {
-        return {};
+    enter_wall_ = ugv_reset_safety::monotonicSeconds();
+    const auto target = controller_.resetTarget();
+    if (controller_.resetTargetReady()) {
+        controller_.resetSession().begin({target.x, target.y, target.yaw});
     }
-    plan_ = planUnicycleReset(controller_.controlState(), controller_.resetTarget(),
-                              controller_.config());
-    if (plan_.already_arrived) {
-        emitZero(ctx);
-        postDone(ctx, event_type::RESET_ARRIVED);
-        return {};
-    }
-    if (!plan_.valid) {
-        emitZero(ctx);
-        postDone(ctx, event_type::RESET_PLAN_FAILED);
-        return {};
-    }
+    emitZero(ctx);
     return {};
 }
 
 ::state_machine::ActionResult ResetState::onTick(::state_machine::StateContext& ctx) {
     const auto cfg = controller_.config();
     const double now = controller_.currentTime();
-    if (cfg.reset_timeout > 0.0 && now - enter_time_ >= cfg.reset_timeout) {
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    if (cfg.reset_timeout > 0.0 &&
+        (now - enter_time_ >= cfg.reset_timeout || wall - enter_wall_ >= cfg.reset_timeout)) {
         emitZero(ctx);
         postDone(ctx, event_type::RESET_TIMEOUT);
         return {};
     }
-    if (!controller_.resetTargetReady()) {
+    if (!controller_.healthReady()) {
         emitZero(ctx);
         return {};
     }
-    if (!plan_.valid && !plan_.already_arrived) {
-        plan_ = planUnicycleReset(controller_.controlState(), controller_.resetTarget(), cfg);
-        if (plan_.already_arrived) {
-            emitZero(ctx);
-            postDone(ctx, event_type::RESET_ARRIVED);
-            return {};
-        }
-        if (!plan_.valid) {
-            emitZero(ctx);
-            postDone(ctx, event_type::RESET_PLAN_FAILED);
-            return {};
-        }
-        t_along_ = 0.0;
-        last_track_time_ = now;
-        have_track_time_ = true;
-    }
-    if (have_track_time_) {
-        const double dt = now - last_track_time_;
-        if (std::isfinite(dt) && dt > 0.0) {
-            t_along_ += dt;
-        }
-    }
-    last_track_time_ = now;
-    have_track_time_ = true;
-    const UnicycleResetOutput output =
-        trackUnicycleReset(controller_.controlState(), plan_, t_along_, cfg);
-    if (output.position_ok) {
+    if (!controller_.resetSession().active()) {
         emitZero(ctx);
-        postDone(ctx, event_type::RESET_ARRIVED);
+        postDone(ctx, event_type::RESET_REJECTED);
+        return {};
+    }
+    const auto feedback = controller_.resetSession().feedback(ros::Time(now).toNSec(), wall);
+    if (feedback.valid && feedback.status != ugv_reset_safety::ResetSession::RUNNING) {
+        emitZero(ctx);
+        postDone(ctx, feedback.status == ugv_reset_safety::ResetSession::ARRIVED
+                          ? event_type::RESET_ARRIVED
+                          : event_type::RESET_REJECTED);
         return {};
     }
     ControlCommand command;
     command.stamp = ros::Time(now);
-    command.linear_speed = output.linear_speed;
-    command.angular_speed = output.angular_speed;
     command.valid = true;
+    if (feedback.valid) {
+        // Safety inputs are solved jointly. Refuse an invalid contract; do not
+        // apply post-QP saturation, which would invalidate the safe solution.
+        if (std::abs(feedback.command.x) > cfg.chassis_max_linear_speed ||
+            feedback.command.y != 0.0 ||
+            std::abs(feedback.command.yaw) > cfg.chassis_max_yaw_rate) {
+            emitZero(ctx);
+            postDone(ctx, event_type::RESET_REJECTED);
+            return {};
+        }
+        command.linear_speed = feedback.command.x;
+        command.angular_speed = feedback.command.yaw;
+    }
+    // Missing/expired coordinator response commands zero, including /clock pause.
     emitCommand(ctx, command);
     return {};
 }
 
 ::state_machine::ActionResult ResetState::onExit(::state_machine::StateContext& ctx) {
+    controller_.resetSession().cancel();
     emitZero(ctx);
     command_gate_.reset();
-    plan_ = UnicycleBezierPlan{};
-    have_track_time_ = false;
-    t_along_ = 0.0;
     return {};
 }
 
 void ResetState::emitCommand(::state_machine::StateContext& ctx, const ControlCommand& command) {
     const auto cfg = controller_.config();
-    if (!command_gate_.due(controller_.currentTime(), 1.0 / cfg.command_publish_rate_hz)) {
+    controller_.setCommand(command);
+    if (!command_gate_.due(ugv_reset_safety::monotonicSeconds(),
+                           1.0 / cfg.command_publish_rate_hz)) {
         return;
     }
-    controller_.setCommand(command);
     ctx.emitOutput(
         ::state_machine::Event(output_event_type::PUBLISH_CMD_VEL,
                                ::state_machine::EventTimestamp{controller_.currentTime()}));

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ugv_reset_safety/reset_session.h>
+
 #include <memory>
 #include <mutex>
 #include <state_machine/state_machine.hpp>
@@ -34,11 +36,18 @@ class MecanumUgvController {
     void setCommand(ControlCommand command);
     ControlCommand command() const;
     void clearCommand();
+    ugv_reset_safety::ResetSession& resetSession() {
+        return reset_session_;
+    }
+    const ugv_reset_safety::ResetSession& resetSession() const {
+        return reset_session_;
+    }
 
    private:
     void setupMachine();
     void maybeAutoStartCustom1();
 
+    ugv_reset_safety::ResetSession reset_session_;
     const UgvState& state_;
     mutable std::mutex config_mutex_;
     ControllerConfig config_;

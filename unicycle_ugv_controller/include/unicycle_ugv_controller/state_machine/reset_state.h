@@ -27,11 +27,8 @@ class ResetState final : public ::state_machine::State {
 
     UnicycleUgvController& controller_;
     PeriodicGate command_gate_;
-    UnicycleBezierPlan plan_{};
     double enter_time_{0.0};
-    double last_track_time_{0.0};
-    double t_along_{0.0};
-    bool have_track_time_{false};
+    double enter_wall_{0.0};
 };
 
 }  // namespace unicycle_ugv_controller

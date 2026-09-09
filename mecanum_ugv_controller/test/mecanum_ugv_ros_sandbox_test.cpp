@@ -5,6 +5,8 @@
 #include <ros/ros.h>
 #include <std_msgs/String.h>
 #include <std_msgs/UInt32.h>
+#include <ugv_reset_safety/ResetRequest.h>
+#include <ugv_reset_safety/ResetResponse.h>
 
 #include <cmath>
 #include <functional>
@@ -42,13 +44,29 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
     ros::Publisher command_pub = nh.advertise<std_msgs::String>("/ugv_test/command", 10);
     ros::Publisher reset_pub = nh.advertise<geometry_msgs::Pose2D>("/ugv_test/reset_pose", 10);
 
+    ros::Publisher safe_pub =
+        nh.advertise<ugv_reset_safety::ResetResponse>("/ugv_test/reset/response", 1);
+    bool grant_response = false;
+    ros::Subscriber request_sub = nh.subscribe<ugv_reset_safety::ResetRequest>(
+        "/ugv_test/reset/request", 1, [&](const ugv_reset_safety::ResetRequest::ConstPtr& request) {
+            if (!grant_response) {
+                return;
+            }
+            ugv_reset_safety::ResetResponse reply;
+            reply.header = request->header;
+            reply.generation = request->generation;
+            reply.status = ugv_reset_safety::ResetResponse::RUNNING;
+            reply.command.linear.x = 0.1;
+            safe_pub.publish(reply);
+        });
     uint32_t control_state = 0;
     geometry_msgs::Twist last_cmd;
     ros::Subscriber state_sub = nh.subscribe<std_msgs::UInt32>(
         "/ugv_test/alg/mecanum_ugv_controller/status/control_state", 10,
         [&](const std_msgs::UInt32::ConstPtr& msg) { control_state = msg->data; });
     ros::Subscriber cmd_sub = nh.subscribe<geometry_msgs::Twist>(
-        "/ugv_test/cmd_vel", 10, [&](const geometry_msgs::Twist::ConstPtr& msg) { last_cmd = *msg; });
+        "/ugv_test/cmd_vel", 10,
+        [&](const geometry_msgs::Twist::ConstPtr& msg) { last_cmd = *msg; });
 
     ASSERT_TRUE(waitFor(
         [&]() {
@@ -84,7 +102,22 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
         },
         2.0))
         << "expected Reset";
-    EXPECT_GT(last_cmd.linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(last_cmd.linear.x, 0.0) << "missing coordinator must never drive";
+    grant_response = true;
+    ASSERT_TRUE(waitFor(
+        [&]() {
+            pose_pub.publish(makePose(0.0, 0.0, 0.0, ros::Time::now()));
+            return last_cmd.linear.x > 0.0;
+        },
+        2.0));
+    grant_response = false;
+    ASSERT_TRUE(waitFor(
+        [&]() {
+            pose_pub.publish(makePose(0.0, 0.0, 0.0, ros::Time::now()));
+            return last_cmd.linear.x == 0.0;
+        },
+        1.0))
+        << "expired coordinator lease must stop";
 
     ASSERT_TRUE(waitFor(
         [&]() {

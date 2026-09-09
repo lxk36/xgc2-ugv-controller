@@ -5,13 +5,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs)
+find_package(catkin REQUIRED COMPONENTS geometry_msgs roscpp std_msgs ugv_reset_safety)
 find_package(xgc2_state_machine REQUIRED CONFIG)
 find_package(xgc2_math REQUIRED CONFIG)
 
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS geometry_msgs roscpp std_msgs
+  CATKIN_DEPENDS geometry_msgs roscpp std_msgs ugv_reset_safety
 )
 
 include_directories(include ${catkin_INCLUDE_DIRS})

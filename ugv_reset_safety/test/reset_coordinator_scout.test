@@ -1,0 +1,23 @@
+<launch>
+  <!-- Isolated rostest master only; the shared test program publishes a
+       synthetic pose and must never run on an experiment/vehicle master. -->
+  <node pkg="ugv_reset_safety" type="ugv_reset_coordinator_node"
+        name="reset_fixture_coordinator" output="screen" required="true">
+    <rosparam command="load" file="$(find ugv_reset_safety)/test/reset_coordinator_scout_fixture.yaml"/>
+  </node>
+  <group ns="reset_fixture_robot">
+    <node pkg="unicycle_ugv_controller" type="unicycle_ugv_controller_node"
+          name="unicycle_ugv_controller" output="screen" required="true">
+      <rosparam command="load" file="$(find unicycle_ugv_controller)/config/unicycle_ugv_controller.yaml"/>
+      <param name="state_source" value="platform_pose"/>
+      <param name="chassis/max_linear_speed" value="0.35"/>
+      <param name="chassis/max_yaw_rate" value="0.5"/>
+      <param name="reset/timeout" value="60.0"/>
+      <remap from="reset/response" to="/reset_fixture/controller_response"/>
+    </node>
+  </group>
+  <test test-name="reset_coordinator_scout_transport"
+        pkg="ugv_reset_safety" type="reset_coordinator_rostest.py" time-limit="95.0">
+    <param name="robot_type" value="scout"/>
+  </test>
+</launch>

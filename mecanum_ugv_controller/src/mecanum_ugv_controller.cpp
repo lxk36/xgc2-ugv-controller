@@ -186,6 +186,11 @@ void MecanumUgvController::setupMachine() {
         .to(state_type::Ready)
         .on(event_type::RESET_TIMEOUT)
         .priority(transition_priority::AUTOMATIC);
+    builder.transition()
+        .from(state_type::Reset)
+        .to(state_type::Ready)
+        .on(event_type::RESET_REJECTED)
+        .priority(transition_priority::AUTOMATIC);
 
     auto result = builder.build();
     requireOk(result.status, "build Mecanum controller state machine");

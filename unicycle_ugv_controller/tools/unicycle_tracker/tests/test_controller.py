@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 import math
-import random
 import unittest
 
 from unicycle_tracker.controller import (
     PoseVelocityFilter,
     box_saturate,
     flatness_command,
-    max_box_on_plan,
-    plan_reset,
     update_pose_velocity_filter,
 )
 
@@ -47,52 +44,8 @@ class UnicycleTrackerTests(unittest.TestCase):
         )
         self.assertFalse(out.valid)
 
-    def test_reset_plan_stays_inside_chassis_box(self) -> None:
-        plan = plan_reset(0.0, 0.0, 0.0, 2.0, 0.0, 0.0)
-        self.assertTrue(plan.valid)
-        max_v, max_w, ok = max_box_on_plan(plan)
-        self.assertTrue(ok)
-        self.assertLessEqual(max_v, 1.05 + 1.0e-6)
-        self.assertLessEqual(max_w, 1.05 + 1.0e-6)
 
-    def test_reset_plan_succeeds_on_named_relative_poses(self) -> None:
-        cases = (
-            (1.2, -0.8, 0.7, "Q4"),
-            (-0.5, 1.4, -2.8, "Q2-wrap"),
-            (0.3, 0.3, 3.0, "near-pi"),
-            (-1.5, -1.2, 0.0, "Q3-yaw0"),
-            (1.0, 0.0, math.pi / 2.0, "east-90"),
-            (0.0, 1.0, -math.pi / 2.0, "north-neg90"),
-            (0.06, 0.0, 0.0, "just-outside-5cm"),
-            (2.0, 1.5, -3.0, "far-wrap"),
-            (-0.8, 0.8, 3.1, "Q2-pi"),
-            (0.2, 0.0, math.pi, "facing-away-short"),
-            (3.0, 0.0, math.pi, "facing-away-long"),
-        )
-        for x, y, yaw, name in cases:
-            plan = plan_reset(x, y, yaw, 0.0, 0.0, 0.0)
-            self.assertTrue(plan.valid, name)
-            _, _, ok = max_box_on_plan(plan)
-            self.assertTrue(ok, name)
 
-    def test_reset_plan_random_relative_poses_all_succeed(self) -> None:
-        rng = random.Random(20260904)
-        failures = []
-        for i in range(1000):
-            dist = rng.uniform(0.06, 6.0)
-            bearing = rng.uniform(-math.pi, math.pi)
-            x = dist * math.cos(bearing)
-            y = dist * math.sin(bearing)
-            yaw = rng.uniform(-math.pi, math.pi)
-            goal_yaw = rng.uniform(-math.pi, math.pi)
-            plan = plan_reset(x, y, yaw, 0.0, 0.0, goal_yaw)
-            if not plan.valid:
-                failures.append((i, "invalid", x, y, yaw, goal_yaw, dist))
-                continue
-            max_v, max_w, ok = max_box_on_plan(plan)
-            if not ok:
-                failures.append((i, "box", x, y, yaw, goal_yaw, dist, max_v, max_w))
-        self.assertEqual(failures, [], "planning failures: %s" % (failures[:12],))
 
 
 if __name__ == "__main__":

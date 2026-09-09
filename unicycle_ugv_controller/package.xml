@@ -45,6 +45,8 @@
   <exec_depend version_gte="0.5.0-1~focal">libxgc2-math-dev</exec_depend>
   <exec_depend>xgc2-acados</exec_depend>
 
+  <depend>ugv_reset_safety</depend>
+
   <test_depend>gtest</test_depend>
 
   <export>

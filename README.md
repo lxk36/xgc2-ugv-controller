@@ -7,13 +7,19 @@ Packages:
 - `unicycle_reference_trajectory`: planar reference trajectory messages,
   generation runtime, and ROS publishers.
 - `unicycle_ugv_controller`: unicycle chassis controller, unique `cmd_vel`
-  publisher. CONTROL states: SelfCheck / Ready / Reset / Custom1. Reset is a
-  cubic Bézier placement to Experiment `initialPose`. Custom1 selects `nmpc`
-  or `flatness` by rosparam. Remote I/O is canonical `{ns}/pose` only.
+  publisher. CONTROL states: SelfCheck / Ready / Reset / Custom1. Reset executes leased commands from `ugv_reset_safety`. Custom1 selects
+  `nmpc` or `flatness` by rosparam. Remote I/O is canonical `{ns}/pose` only.
 - `mecanum_ugv_controller`: reusable holonomic chassis modules. Health /
   SelfCheck, `Reset` to an Experiment `initialPose`, and first-order Custom1
   (world ENU velocity to body FLU, heading P to east). Algorithms publish
   `{ns}/alg/reference/twist` only; they do not publish `cmd_vel`.
+- `ugv_reset_safety`: shared fleet Reset coordinator, geometric guidance,
+  full-footprint obstacle/inter-vehicle CBF QP, command limits and slew limits.
+  Both chassis owners use this implementation; the old Reset laws are removed.
+
+Reset requires an explicit target, a complete UGV roster, fresh canonical poses
+and controller states, and an authoritative static obstacle snapshot. Missing
+inputs refuse motion. See [Reset design and limits](ugv_reset_safety/README.md).
 
 ## Install
 

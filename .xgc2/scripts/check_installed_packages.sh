@@ -11,6 +11,7 @@ dpkg -s "ros-${ROS_DISTRO}-xgc2-ugv-controller" >/dev/null
 dpkg -s "ros-${ROS_DISTRO}-xgc2-estimator-rigid-state-msgs" >/dev/null
 dpkg -s "ros-${ROS_DISTRO}-xgc2-unicycle-reference-trajectory-msgs" >/dev/null
 dpkg -s "ros-${ROS_DISTRO}-xgc2-ros1-utils" >/dev/null
+dpkg -s "ros-${ROS_DISTRO}-xgc2-geometry-msgs" >/dev/null
 dpkg -s libxgc2-state-machine-dev >/dev/null
 dpkg -s libxgc2-math-dev >/dev/null
 dpkg -s xgc2-acados >/dev/null
@@ -23,6 +24,7 @@ test "$(rospack find rigid_state_estimator_msgs)" = "/opt/ros/${ROS_DISTRO}/shar
 test "$(rospack find unicycle_reference_trajectory_msgs)" = "/opt/ros/${ROS_DISTRO}/share/unicycle_reference_trajectory_msgs"
 rosmsg show rigid_state_estimator_msgs/RigidStateEstimate | grep -q '^uint8 estimator_state$'
 rosmsg show rigid_state_estimator_msgs/RigidStateEstimate | grep -q '^geometry_msgs/Vector3 angular_velocity$'
+rosmsg show unicycle_reference_trajectory_msgs/PlanarPvaReference | grep -q '^geometry_msgs/Point position$'
 rosmsg show unicycle_reference_trajectory_msgs/AnalyticReference | grep -q '^uint16 analytic_type$'
 rosmsg show unicycle_reference_trajectory_msgs/SampledReference | grep -q '^unicycle_reference_trajectory_msgs/PlanarReferencePoint\[\] points$'
 test -f "/opt/ros/${ROS_DISTRO}/share/unicycle_reference_trajectory/config/unicycle_reference_trajectory.yaml"
@@ -54,6 +56,36 @@ while IFS= read -r file; do
 done < <(find "/opt/ros/${ROS_DISTRO}/lib/unicycle_ugv_controller" \
   "/opt/ros/${ROS_DISTRO}/lib/unicycle_reference_trajectory" \
   "/opt/ros/${ROS_DISTRO}/lib/mecanum_ugv_controller" \
+  "/opt/ros/${ROS_DISTRO}/lib/ugv_reset_safety" \
+  "/opt/ros/${ROS_DISTRO}/lib/libugv_reset_safety_math.so" \
   "/opt/ros/${ROS_DISTRO}/lib/libunicycle_ugv_controller_nmpc_runtime.so" -type f 2>/dev/null | sort -u)
 
+test -x "/opt/ros/${ROS_DISTRO}/lib/ugv_reset_safety/ugv_reset_coordinator_node"
+rosmsg show ugv_reset_safety/ResetRequest | grep -q "^uint32 generation$"
+rosmsg show ugv_reset_safety/ResetResponse | grep -q "^uint8 status$"
+test "$(rospack find ugv_reset_safety)" = "/opt/ros/${ROS_DISTRO}/share/ugv_reset_safety"
+roslaunch --files ugv_reset_safety ugv_reset_coordinator.launch fleet_config:="/opt/ros/${ROS_DISTRO}/share/ugv_reset_safety/config/mixed_pair.yaml" >/tmp/xgc2-reset-coordinator-files.txt
+
+# Exercise the installed public interface using only its exported compiler flags.
+# A missing Eigen include export or pkg-config dependency must fail this check.
+test "$(pkg-config --variable=prefix ugv_reset_safety)" = "/opt/ros/${ROS_DISTRO}"
+reset_public_cflags_text="$(pkg-config --cflags ugv_reset_safety)"
+read -r -a reset_public_cflags <<< "${reset_public_cflags_text}"
+c++ -std=c++17 -fsyntax-only -x c++ "${reset_public_cflags[@]}" - <<'CPP'
+#include <ugv_reset_safety/fleet_guidance.h>
+#include <ugv_reset_safety/fleet_schedule.h>
+#include <ugv_reset_safety/reset_client.h>
+#include <ugv_reset_safety/reset_guidance.h>
+#include <ugv_reset_safety/reset_session.h>
+#include <ugv_reset_safety/safety_filter.h>
+int main() { return 0; }
+CPP
+
+reset_osqp_path="$(ldd "/opt/ros/${ROS_DISTRO}/lib/libugv_reset_safety_math.so" |
+  awk '$1 == "libosqp.so" {print $3; exit}')"
+if [[ -z "${reset_osqp_path}" ]] ||
+   [[ "$(readlink -f "${reset_osqp_path}")" != "$(readlink -f /opt/xgc2/acados/lib/libosqp.so)" ]]; then
+  echo "Reset safety library resolved an unexpected OSQP: ${reset_osqp_path}" >&2
+  exit 1
+fi
 echo "Installed package check passed"

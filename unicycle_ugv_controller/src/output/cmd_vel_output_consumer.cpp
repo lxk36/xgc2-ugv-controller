@@ -7,34 +7,26 @@
 #include "unicycle_ugv_controller/common/types.h"
 
 namespace unicycle_ugv_controller {
-namespace {
-
-template <typename Message>
-std::unique_ptr<::state_machine::runtime::Task<ros::NodeHandle>> makePublishTask(
-    std::string name, const ros::Publisher& pub, Message msg) {
-    return std::make_unique<::state_machine::runtime::LambdaTask<ros::NodeHandle>>(
-        std::move(name),
-        [pub, msg = std::move(msg)](ros::NodeHandle&) mutable { pub.publish(msg); });
-}
-
-}  // namespace
-
 CmdVelOutputConsumer::CmdVelOutputConsumer(
     ros::NodeHandle& nh, ::state_machine::runtime::AsyncTaskExecutor<ros::NodeHandle>& executor,
     UnicycleUgvController& controller, const std::string& cmd_vel_topic, uint32_t queue_size)
-    : executor_(executor), controller_(controller) {
-    cmd_vel_pub_ = nh.advertise<geometry_msgs::Twist>(cmd_vel_topic, queue_size);
+    : controller_(controller) {
+    (void)executor;
+    (void)queue_size;
+    cmd_vel_pub_ = nh.advertise<geometry_msgs::Twist>(cmd_vel_topic, 1);
 }
 
 bool CmdVelOutputConsumer::handle(const ::state_machine::Event& event) {
     if (event.id == output_event_type::PUBLISH_CMD_VEL) {
-        executor_.pushTask(
-            makePublishTask("PublishCmdVel", cmd_vel_pub_, makeTwist(controller_.command())));
+        const auto command = makeTwist(controller_.command());
+        cmd_vel_pub_.publish(command);
+        controller_.resetSession().noteApplied(
+            {command.linear.x, command.linear.y, command.angular.z}, ros::Time::now().toNSec());
         return true;
     }
     if (event.id == output_event_type::PUBLISH_ZERO_CMD_VEL) {
-        executor_.pushTask(
-            makePublishTask("PublishZeroCmdVel", cmd_vel_pub_, geometry_msgs::Twist{}));
+        cmd_vel_pub_.publish(geometry_msgs::Twist{});
+        controller_.resetSession().noteApplied({}, ros::Time::now().toNSec());
         return true;
     }
     return false;
@@ -48,6 +40,19 @@ geometry_msgs::Twist CmdVelOutputConsumer::makeTwist(const ControlCommand& comma
         return msg;
     }
     const auto control = controller_.stateMachine().currentState(region_type::CONTROL);
+    if (control == state_type::Reset) {
+        const auto feedback = controller_.resetSession().feedback(
+            ros::Time::now().toNSec(), ugv_reset_safety::monotonicSeconds());
+        if (!feedback.valid || feedback.status != ugv_reset_safety::ResetSession::RUNNING ||
+            std::abs(feedback.command.x) > cfg.chassis_max_linear_speed ||
+            feedback.command.y != 0.0 ||
+            std::abs(feedback.command.yaw) > cfg.chassis_max_yaw_rate) {
+            return msg;
+        }
+        msg.linear.x = feedback.command.x;
+        msg.angular.z = feedback.command.yaw;
+        return msg;
+    }
     if (control == state_type::Custom1 && cfg.tracking_strategy == TrackingStrategy::NMPC) {
         msg.linear.x = clamp(command.linear_speed, cfg.min_linear_speed, cfg.max_linear_speed);
         msg.angular.z = clamp(command.angular_speed, -cfg.max_angular_speed, cfg.max_angular_speed);

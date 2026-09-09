@@ -18,10 +18,7 @@ platform_pose_topic: "pose"
 reset_pose_topic: "reset_pose"
 
 reset:
-  timeout: 45.0
-  arrive_position: 0.05
-  kp_along: 0.8
-  kp_heading: 1.2
+  timeout: 600.0
 
 chassis:
   max_linear_speed: 1.05
@@ -47,9 +44,6 @@ fence:
   y_min: -20.0
   y_max: 20.0
 
-reset_initial_x: 0.0
-reset_initial_y: 0.0
-reset_initial_yaw: 0.0
 
 nmpc:
   control_period: 0.1
@@ -76,3 +70,5 @@ limits:
   max_angular_speed: 2.5
   max_linear_acceleration: 2.0
   max_angular_acceleration: 3.0
+
+# Reset needs an explicit reset_pose message or all three reset_initial_* params.

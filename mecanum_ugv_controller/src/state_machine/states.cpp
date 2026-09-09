@@ -1,3 +1,4 @@
+#include <cmath>
 #include <utility>
 
 #include "mecanum_ugv_controller/common/types.h"
@@ -86,43 +87,69 @@ ReadyState::ReadyState(MecanumUgvController& controller) : controller_(controlle
 ResetState::ResetState(MecanumUgvController& controller) : controller_(controller) {}
 
 ::state_machine::ActionResult ResetState::onEnter(::state_machine::StateContext& ctx) {
-    (void)ctx;
     controller_.clearCommand();
     command_gate_.reset();
     enter_time_ = controller_.currentTime();
+    enter_wall_ = ugv_reset_safety::monotonicSeconds();
+    const auto target = controller_.resetTarget();
+    if (controller_.resetTargetReady()) {
+        controller_.resetSession().begin({target.x, target.y, target.yaw});
+    }
+    emitZero(ctx);
     return {};
 }
 
 ::state_machine::ActionResult ResetState::onTick(::state_machine::StateContext& ctx) {
     const auto cfg = controller_.config();
     const double now = controller_.currentTime();
-    if (cfg.reset_timeout > 0.0 && now - enter_time_ >= cfg.reset_timeout) {
+    const double wall = ugv_reset_safety::monotonicSeconds();
+    if (cfg.reset_timeout > 0.0 &&
+        (now - enter_time_ >= cfg.reset_timeout || wall - enter_wall_ >= cfg.reset_timeout)) {
         emitZero(ctx);
         postDone(ctx, event_type::RESET_TIMEOUT);
         return {};
     }
-    if (!controller_.resetTargetReady()) {
+    if (!controller_.healthReady()) {
         emitZero(ctx);
         return {};
     }
-    const HolonomicResetOutput output =
-        computeHolonomicResetCommand(controller_.state(), controller_.resetTarget(), cfg);
-    if (output.position_ok) {
+    if (!controller_.resetSession().active()) {
         emitZero(ctx);
-        postDone(ctx, event_type::RESET_ARRIVED);
+        postDone(ctx, event_type::RESET_REJECTED);
+        return {};
+    }
+    const auto feedback = controller_.resetSession().feedback(ros::Time(now).toNSec(), wall);
+    if (feedback.valid && feedback.status != ugv_reset_safety::ResetSession::RUNNING) {
+        emitZero(ctx);
+        postDone(ctx, feedback.status == ugv_reset_safety::ResetSession::ARRIVED
+                          ? event_type::RESET_ARRIVED
+                          : event_type::RESET_REJECTED);
         return {};
     }
     ControlCommand command;
     command.stamp = ros::Time(now);
-    command.linear_x = output.linear_x;
-    command.linear_y = output.linear_y;
-    command.angular_z = output.angular_z;
     command.valid = true;
+    if (feedback.valid) {
+        // Safety inputs are solved jointly. Refuse an invalid contract; do not
+        // apply post-QP saturation, which would invalidate the safe solution.
+        if (std::abs(feedback.command.x) > cfg.max_linear_speed ||
+            std::abs(feedback.command.y) > cfg.max_linear_speed ||
+            std::abs(feedback.command.yaw) > cfg.max_yaw_rate) {
+            emitZero(ctx);
+            postDone(ctx, event_type::RESET_REJECTED);
+            return {};
+        }
+        command.linear_x = feedback.command.x;
+        command.linear_y = feedback.command.y;
+        command.angular_z = feedback.command.yaw;
+    }
+    // Missing/expired coordinator response commands zero, including /clock pause.
     emitCommand(ctx, command);
     return {};
 }
 
 ::state_machine::ActionResult ResetState::onExit(::state_machine::StateContext& ctx) {
+    controller_.resetSession().cancel();
     emitZero(ctx);
     command_gate_.reset();
     return {};
@@ -130,10 +157,11 @@ ResetState::ResetState(MecanumUgvController& controller) : controller_(controlle
 
 void ResetState::emitCommand(::state_machine::StateContext& ctx, const ControlCommand& command) {
     const auto cfg = controller_.config();
-    if (!command_gate_.due(controller_.currentTime(), 1.0 / cfg.command_publish_rate_hz)) {
+    controller_.setCommand(command);
+    if (!command_gate_.due(ugv_reset_safety::monotonicSeconds(),
+                           1.0 / cfg.command_publish_rate_hz)) {
         return;
     }
-    controller_.setCommand(command);
     ctx.emitOutput(
         ::state_machine::Event(output_event_type::PUBLISH_CMD_VEL,
                                ::state_machine::EventTimestamp{controller_.currentTime()}));
