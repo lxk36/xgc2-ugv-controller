@@ -26,7 +26,7 @@ xgc2_geometry_msgs::SceneSnapshot fixture(const std::string& type) {
     return scene;
 }
 xgc2_geometry_msgs::SceneState liveState(const xgc2_geometry_msgs::SceneSnapshot& scene,
-                                           double x = 0, double vx = 0, double omega = 0) {
+                                         double x = 0, double vx = 0, double omega = 0) {
     xgc2_geometry_msgs::SceneState state;
     state.header.frame_id = scene.header.frame_id;
     state.epoch = scene.epoch;

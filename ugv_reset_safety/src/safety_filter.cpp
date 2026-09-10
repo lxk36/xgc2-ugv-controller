@@ -259,8 +259,7 @@ FilterResult solveSafetyFilter(const std::vector<Robot>& robots,
                 const double radius = disk.radius + margin;
                 const Eigen::Vector2d lever = closest - obstacle.origin;
                 const Eigen::Vector2d v_obs =
-                    obstacle.velocity +
-                    obstacle.omega * Eigen::Vector2d(-lever.y(), lever.x());
+                    obstacle.velocity + obstacle.omega * Eigen::Vector2d(-lever.y(), lever.x());
                 for (const auto& lateral : lateral_extremes[i]) {
                     Eigen::VectorXd row = Eigen::VectorXd::Zero(n);
                     row.segment<3>(3 * i) = 2.0 * disk.velocity_map.transpose() * delta;
