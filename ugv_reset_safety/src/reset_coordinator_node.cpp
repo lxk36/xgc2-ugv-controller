@@ -6,9 +6,9 @@
 #include <ugv_reset_safety/fleet_guidance.h>
 #include <ugv_reset_safety/fleet_schedule.h>
 #include <ugv_reset_safety/reset_guidance.h>
-#include <xgc2_geometry_msgs/SceneState.h>
-#include <xgc2_geometry_msgs/SceneConsumerStatus.h>
 #include <ugv_reset_safety/scene_projection.h>
+#include <xgc2_geometry_msgs/SceneConsumerStatus.h>
+#include <xgc2_geometry_msgs/SceneState.h>
 
 #include <Eigen/Geometry>
 #include <algorithm>
@@ -151,8 +151,10 @@ class Coordinator {
             entries_.push_back(std::move(e));
         }
         scene_sub_ = nh_.subscribe(scene_namespace_ + "/snapshot", 1, &Coordinator::scene, this);
-        scene_state_sub_ = nh_.subscribe(scene_namespace_ + "/state", 1, &Coordinator::sceneState, this);
-        scene_status_pub_ = nh_.advertise<xgc2_geometry_msgs::SceneConsumerStatus>(scene_namespace_ + "/consumer_status", 1, true);
+        scene_state_sub_ =
+            nh_.subscribe(scene_namespace_ + "/state", 1, &Coordinator::sceneState, this);
+        scene_status_pub_ = nh_.advertise<xgc2_geometry_msgs::SceneConsumerStatus>(
+            scene_namespace_ + "/consumer_status", 1, true);
     }
     void run() {
         ros::WallRate rate(frequency_);
@@ -277,10 +279,12 @@ class Coordinator {
     }
     void sceneState(const xgc2_geometry_msgs::SceneState::ConstPtr& state) {
         if (state->epoch == snapshot_.epoch && state->revision == snapshot_.revision &&
-            state->header.frame_id == world_frame_) scene_state_wall_ = ros::WallTime::now();
+            state->header.frame_id == world_frame_)
+            scene_state_wall_ = ros::WallTime::now();
     }
     void scene(const xgc2_geometry_msgs::SceneSnapshot::ConstPtr& snapshot) {
-        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision) return;
+        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision)
+            return;
         snapshot_ = *snapshot;
         scene_valid_ = false;
         try {
@@ -321,7 +325,9 @@ class Coordinator {
         status.revision = snapshot_.revision;
         status.consumer = "ugv-reset";
         status.success = scene_valid_;
-        status.message = scene_valid_ ? "applied conservative planar projection (32 support halfspaces per part)" : scene_error_;
+        status.message =
+            scene_valid_ ? "applied conservative planar projection (32 support halfspaces per part)"
+                         : scene_error_;
         scene_status_pub_.publish(status);
     }
     void reply(Entry& e, uint8_t status, const Eigen::Vector3d& command,
