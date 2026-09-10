@@ -279,12 +279,14 @@ class Coordinator {
     }
     void sceneState(const xgc2_geometry_msgs::SceneState::ConstPtr& state) {
         if (state->epoch == snapshot_.epoch && state->revision == snapshot_.revision &&
-            state->header.frame_id == world_frame_)
+            state->header.frame_id == world_frame_) {
             scene_state_wall_ = ros::WallTime::now();
+        }
     }
     void scene(const xgc2_geometry_msgs::SceneSnapshot::ConstPtr& snapshot) {
-        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision)
+        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision) {
             return;
+        }
         snapshot_ = *snapshot;
         scene_valid_ = false;
         try {
