@@ -13,6 +13,7 @@
 #include <Eigen/Geometry>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
@@ -155,6 +156,10 @@ class Coordinator {
             nh_.subscribe(scene_namespace_ + "/state", 1, &Coordinator::sceneState, this);
         scene_status_pub_ = nh_.advertise<xgc2_geometry_msgs::SceneConsumerStatus>(
             scene_namespace_ + "/consumer_status", 1, true);
+        consumer_generation_ = static_cast<uint32_t>(ros::WallTime::now().toNSec() & 0xffffffffu);
+        if (consumer_generation_ == 0) {
+            consumer_generation_ = 1;
+        }
     }
     void run() {
         ros::WallRate rate(frequency_);
@@ -278,58 +283,122 @@ class Coordinator {
         }
     }
     void sceneState(const xgc2_geometry_msgs::SceneState::ConstPtr& state) {
-        if (state->epoch == snapshot_.epoch && state->revision == snapshot_.revision &&
-            state->header.frame_id == world_frame_) {
-            scene_state_wall_ = ros::WallTime::now();
-        }
-    }
-    void scene(const xgc2_geometry_msgs::SceneSnapshot::ConstPtr& snapshot) {
-        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision) {
+        if (snapshot_.epoch.empty() || !scene_parsed_) {
             return;
         }
-        snapshot_ = *snapshot;
-        scene_valid_ = false;
+        if (state->epoch != snapshot_.epoch || state->revision != snapshot_.revision ||
+            state->header.frame_id != world_frame_ || state->header.stamp.isZero()) {
+            return;
+        }
+        if (!last_state_stamp_.isZero() && state->header.stamp <= last_state_stamp_) {
+            return;
+        }
         try {
-            auto scene = scene_projection::project(snapshot_, world_frame_);
-            bool changed = scene.size() != obstacles_.size();
-            if (!changed) {
-                for (std::size_t i = 0; i < scene.size(); ++i) {
-                    if (scene[i].id != obstacles_[i].id ||
-                        scene[i].vertices.size() != obstacles_[i].vertices.size()) {
-                        changed = true;
+            auto geometry = scene_projection::live(snapshot_, *state, world_frame_);
+            bool moved = geometry.live.size() != obstacles_.size();
+            if (!moved) {
+                for (std::size_t i = 0; i < geometry.live.size(); ++i) {
+                    if (geometry.live[i].id != obstacles_[i].id ||
+                        geometry.live[i].vertices.size() != obstacles_[i].vertices.size()) {
+                        moved = true;
                         break;
                     }
-                    for (std::size_t j = 0; j < scene[i].vertices.size(); ++j) {
-                        if ((scene[i].vertices[j] - obstacles_[i].vertices[j]).norm() > 1e-10) {
-                            changed = true;
+                    for (std::size_t j = 0; j < geometry.live[i].vertices.size(); ++j) {
+                        if ((geometry.live[i].vertices[j] - obstacles_[i].vertices[j]).norm() >
+                            1e-3) {
+                            moved = true;
                             break;
                         }
                     }
                 }
             }
-            obstacles_ = std::move(scene);
+            obstacles_ = std::move(geometry.live);
+            occupancy_ = std::move(geometry.occupancy);
+            scene_state_ = *state;
+            last_state_stamp_ = state->header.stamp;
+            scene_state_wall_ = ros::WallTime::now();
             scene_valid_ = true;
             scene_error_.clear();
-            for (auto& e : entries_) {
-                if (changed && e->have_request) {
-                    e->rejected = true;
-                    e->reason = "scene changed; request a new reset after stopping";
+            scene_capability_ = "ok";
+            if (moved) {
+                for (auto& e : entries_) {
+                    e->planned = false;
+                }
+            }
+        } catch (const std::exception& e) {
+            scene_valid_ = false;
+            scene_error_ = e.what();
+            classifyCapability(scene_error_);
+            ROS_WARN_THROTTLE(2, "Reset live scene rejected: %s", e.what());
+        }
+        publishStatus();
+    }
+    void scene(const xgc2_geometry_msgs::SceneSnapshot::ConstPtr& snapshot) {
+        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision) {
+            return;
+        }
+        const bool definition_changed =
+            !snapshot_.epoch.empty() &&
+            (snapshot->epoch != snapshot_.epoch || snapshot->revision != snapshot_.revision);
+        snapshot_ = *snapshot;
+        scene_parsed_ = false;
+        scene_valid_ = false;
+        scene_error_.clear();
+        obstacles_.clear();
+        occupancy_.clear();
+        last_state_stamp_ = ros::Time();
+        scene_state_wall_ = ros::WallTime();
+        try {
+            std::set<std::string> ids;
+            for (const auto& obstacle : snapshot_.obstacles) {
+                scene_projection::validateObstacle(obstacle, &ids);
+            }
+            if (snapshot_.epoch.empty() || snapshot_.header.frame_id != world_frame_) {
+                throw std::invalid_argument("scene epoch/frame mismatch");
+            }
+            scene_parsed_ = true;
+            scene_capability_ = "ok";
+            if (definition_changed) {
+                for (auto& e : entries_) {
+                    if (e->have_request) {
+                        e->rejected = true;
+                        e->reason = "scene changed; request a new reset after stopping";
+                    }
                 }
             }
         } catch (const std::exception& e) {
             scene_error_ = e.what();
+            classifyCapability(scene_error_);
             ROS_WARN("Reset scene rejected: %s", e.what());
         }
+        publishStatus();
+    }
+    void classifyCapability(const std::string& error) {
+        scene_capability_ = error.find("unsupported") != std::string::npos ? "unsupported" : "";
+    }
+    void publishStatus() {
+        if (snapshot_.epoch.empty()) {
+            return;
+        }
         xgc2_geometry_msgs::SceneConsumerStatus status;
-        status.header = snapshot_.header;
         status.header.stamp = ros::Time::now();
+        status.header.frame_id = world_frame_;
         status.epoch = snapshot_.epoch;
         status.revision = snapshot_.revision;
         status.consumer = "ugv-reset";
-        status.success = scene_valid_;
-        status.message =
-            scene_valid_ ? "applied conservative planar projection (32 support halfspaces per part)"
-                         : scene_error_;
+        status.generation = consumer_generation_;
+        status.applied = scene_parsed_;
+        status.capability = scene_capability_.empty() ? (scene_parsed_ ? "ok" : "") : scene_capability_;
+        status.operational = scene_parsed_ && scene_valid_ && status.capability != "unsupported" &&
+                             !scene_state_wall_.isZero() &&
+                             (ros::WallTime::now() - scene_state_wall_).toSec() <= 0.5;
+        status.success = status.applied;  // derived publish of applied, not a second authority
+        status.message = scene_parsed_
+                             ? (scene_valid_
+                                    ? "applied live planar projection with finite-horizon occupancy"
+                                    : (scene_error_.empty() ? "waiting for matching scene state"
+                                                            : scene_error_))
+                             : scene_error_;
         scene_status_pub_.publish(status);
     }
     void reply(Entry& e, uint8_t status, const Eigen::Vector3d& command,
@@ -366,11 +435,16 @@ class Coordinator {
                 e->have_request && (wall - e->request_wall).toSec() <= timeout_ && e->state == 5;
             active = active || e->robot.active;
         }
+        publishStatus();
         if (!active) {
             return;
         }
         if (scene_state_wall_.isZero() || (wall - scene_state_wall_).toSec() > 0.5) {
             rejectActive("shared scene heartbeat expired");
+            return;
+        }
+        if (!scene_parsed_) {
+            rejectActive("scene unavailable: " + scene_error_);
             return;
         }
         if (!scene_valid_) {
@@ -477,7 +551,7 @@ class Coordinator {
                 e->planned = false;
             }
         }
-        auto guidance_obstacles = obstacles_;
+        auto guidance_obstacles = occupancy_.empty() ? obstacles_ : occupancy_;
         const auto parked = parkedPeerObstacles(robots, selected);
         guidance_obstacles.insert(guidance_obstacles.end(), parked.begin(), parked.end());
         std::vector<GuidanceStatus> statuses(robots.size(), GuidanceStatus::Uninitialized);
@@ -552,10 +626,14 @@ class Coordinator {
     ros::Subscriber scene_sub_, scene_state_sub_;
     ros::Publisher scene_status_pub_;
     xgc2_geometry_msgs::SceneSnapshot snapshot_;
+    xgc2_geometry_msgs::SceneState scene_state_;
+    ros::Time last_state_stamp_;
     ros::WallTime scene_state_wall_;
+    bool scene_parsed_ = false;
     bool scene_valid_ = false;
-    std::string world_frame_, scene_namespace_, scene_error_;
+    std::string world_frame_, scene_namespace_, scene_error_, scene_capability_;
     std::vector<ConvexObstacle> obstacles_;
+    std::vector<ConvexObstacle> occupancy_;
     Fence fence_;
     FilterConfig filter_;
     FleetGuidance passing_;
@@ -564,6 +642,7 @@ class Coordinator {
     std::vector<bool> scheduled_requested_, selected_, completed_;
     ros::WallTime last_admission_;
     double frequency_ = 50, timeout_ = .15;
+    uint32_t consumer_generation_ = 1;
     ros::WallTime last_tick_;
     ros::Time last_ros_tick_;
 };

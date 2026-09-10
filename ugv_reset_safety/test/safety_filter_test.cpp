@@ -388,5 +388,36 @@ TEST(SafetyFilter, EveryLateralCouplingExtremeSatisfiesObstacleAndFenceBarriers)
     EXPECT_EQ(solveSafetyFilter({value}, {}, fence, cfg).status, Status::InvalidInput);
 }
 
+TEST(SafetyFilter, ApproachingObstacleTightensTheBarrierBeyondAStaticCopy) {
+    Robot value = robot();
+    value.nominal.x() = 0.5;
+    auto wall = box(0.7, 1.0, -0.5, 0.5);
+    const auto stationary = solveSafetyFilter({value}, {wall}, noFence(), config());
+    ASSERT_TRUE(stationary.ok()) << stationary.detail;
+    wall.velocity.x() = -0.3;
+    wall.origin = Eigen::Vector2d(0.85, 0.0);
+    const auto approaching = solveSafetyFilter({value}, {wall}, noFence(), config());
+    ASSERT_TRUE(approaching.ok()) << approaching.detail;
+    EXPECT_LT(approaching.commands[0].x(), stationary.commands[0].x());
+    wall.velocity.x() = 0.4;
+    const auto receding = solveSafetyFilter({value}, {wall}, noFence(), config());
+    ASSERT_TRUE(receding.ok()) << receding.detail;
+    EXPECT_GT(receding.commands[0].x(), approaching.commands[0].x());
+    const auto disks = coveringDisks(value, 2);
+    for (const auto& disk : disks) {
+        const Eigen::Vector2d closest(std::clamp(disk.center.x(), 0.7, 1.0),
+                                      std::clamp(disk.center.y(), -0.5, 0.5));
+        const Eigen::Vector2d delta = disk.center - closest;
+        const Eigen::Vector2d lever = closest - wall.origin;
+        const Eigen::Vector2d v_obs =
+            wall.velocity + wall.omega * Eigen::Vector2d(-lever.y(), lever.x());
+        const double radius = disk.radius + config().clearance;
+        const double h = delta.squaredNorm() - radius * radius;
+        EXPECT_GE(2.0 * delta.dot(disk.velocity_map * approaching.commands[0] - v_obs) +
+                      config().barrier_gain * h,
+                  -1.0e-6);
+    }
+}
+
 }  // namespace
 }  // namespace ugv_reset_safety

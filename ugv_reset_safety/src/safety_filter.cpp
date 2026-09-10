@@ -253,15 +253,21 @@ FilterResult solveSafetyFilter(const std::vector<Robot>& robots,
         const double drift = robots[i].active ? config.velocity_uncertainty : 0.0;
         for (const auto& disk : footprints[i]) {
             for (const auto& obstacle : obstacles) {
-                const Eigen::Vector2d delta = disk.center - projectPolygon(disk.center, obstacle);
+                const Eigen::Vector2d closest = projectPolygon(disk.center, obstacle);
+                const Eigen::Vector2d delta = disk.center - closest;
                 const double distance = delta.norm();
                 const double radius = disk.radius + margin;
+                const Eigen::Vector2d lever = closest - obstacle.origin;
+                const Eigen::Vector2d v_obs =
+                    obstacle.velocity +
+                    obstacle.omega * Eigen::Vector2d(-lever.y(), lever.x());
                 for (const auto& lateral : lateral_extremes[i]) {
                     Eigen::VectorXd row = Eigen::VectorXd::Zero(n);
                     row.segment<3>(3 * i) = 2.0 * disk.velocity_map.transpose() * delta;
                     row[3 * i + 2] += 2.0 * delta.dot(lateral);
                     if (!addBarrier(std::move(row), delta.squaredNorm() - radius * radius,
-                                    distance - radius, 2.0 * distance * drift)) {
+                                    distance - radius,
+                                    2.0 * distance * drift + 2.0 * delta.dot(v_obs))) {
                         return fail(Status::UnsafeInitialState,
                                     "footprint intersects obstacle clearance: " + robots[i].id +
                                         "/" + obstacle.id);

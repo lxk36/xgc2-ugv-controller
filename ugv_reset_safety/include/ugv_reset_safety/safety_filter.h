@@ -47,6 +47,12 @@ struct ConvexObstacle {
     std::string id;
     // Clockwise or counterclockwise, without a repeated closing vertex.
     std::vector<Eigen::Vector2d> vertices;
+    // World-frame origin and twist of the parent body. Zero for static shapes.
+    // The closest-point velocity is origin linear plus yaw rate cross the
+    // planar lever arm; this is the instantaneous model, not a future path.
+    Eigen::Vector2d origin{Eigen::Vector2d::Zero()};
+    Eigen::Vector2d velocity{Eigen::Vector2d::Zero()};
+    double omega{0.0};
 };
 
 struct Fence {
@@ -106,13 +112,15 @@ struct FootprintDisk {
 // corners. The velocity Jacobian includes rotation about the pose origin.
 std::vector<FootprintDisk> coveringDisks(const Robot& robot, int count);
 
-// Joint velocity CBF-QP. Hard constraints cover static convex obstacles,
-// every robot disk pair, the fence, velocity bounds, and command slew.
-// Continuous-time safety requires initially safe geometry, feasible continuous
-// enforcement, and the stated velocity model/residual bound. Sampled commands,
-// transport delay, and physical stopping distance require additional validated
-// reserve; this pointwise QP alone does not certify them. Slew constraints alone
-// do not ensure recursive feasibility.
+// Joint velocity CBF-QP. Hard constraints cover convex obstacles with known
+// instantaneous body twist, every robot disk pair, the fence, velocity bounds,
+// and command slew. Instantaneous obstacle velocity is a local Lie derivative
+// term, not a certificate of an arbitrary future trajectory. Continuous-time
+// safety requires initially safe geometry, feasible continuous enforcement, and
+// the stated velocity model/residual bound. Sampled commands, transport delay,
+// and physical stopping distance require additional validated reserve; this
+// pointwise QP alone does not certify them. Slew constraints alone do not
+// ensure recursive feasibility.
 // A successful solve certifies the checked inequalities, not global arrival.
 FilterResult solveSafetyFilter(const std::vector<Robot>& robots,
                                const std::vector<ConvexObstacle>& obstacles, const Fence& fence,

@@ -41,10 +41,25 @@ in XY. This is an explicitly conservative planar outer approximation of the
 shared shape, including sphere/cylinder/capsule curves and oriented convex
 meshes; no hull is taken across a compound opening. Without a robot height
 envelope, overhead parts also project into XY and may conservatively block
-an otherwise traversable 3D passage. Scene revisions cancel an
-active Reset through the existing stopped/re-admission contract. Dynamic
-obstacles are explicitly refused because this controller certifies a static
-workspace. Applied/rejected revisions are published on `consumer_status`.
+an otherwise traversable 3D passage. This package does not certify 3D
+passage through a doorway.
+
+Hold-only snapshots may be projected from rest poses. Any `hold` /
+`constant_twist` / `ping_pong` / `circle` scene requires a live `SceneState`
+of the same epoch and revision. The QP uses the live planar section and the
+closest-point velocity `v + ω × r`. That is an instantaneous Lie derivative, not
+a certificate of an arbitrary future path. Guidance inflates the same section
+isotropically by `(|v_xy| + |ω| ρ) T` with `T = 2 s`. Pause reports zero twist
+and therefore zero occupancy expansion, but still uses the live pose.
+Unknown motion or geometry is a declared capability gap (`applied` may still be
+true; `operational` is false). Stale, unordered, or mismatched state is
+dropped; a cached pose is not reused as a new message. Snapshot epoch/revision
+changes reject an active Reset; live geometry motion only invalidates the
+cached route.
+
+Applied/rejected document versions are published on `consumer_status` with
+explicit `applied`, `operational`, and `capability`. `success` is published equal
+to `applied` and is not a second authority.
 
 ## Guidance and control
 
