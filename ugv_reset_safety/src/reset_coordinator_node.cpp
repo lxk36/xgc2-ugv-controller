@@ -6,8 +6,9 @@
 #include <ugv_reset_safety/fleet_guidance.h>
 #include <ugv_reset_safety/fleet_schedule.h>
 #include <ugv_reset_safety/reset_guidance.h>
-#include <xgc2_geometry_msgs/ConvexBodyArray.h>
-#include <xgc2_geometry_msgs/GeometryLibrary.h>
+#include <xgc2_geometry_msgs/SceneState.h>
+#include <xgc2_geometry_msgs/SceneConsumerStatus.h>
+#include <ugv_reset_safety/scene_projection.h>
 
 #include <Eigen/Geometry>
 #include <algorithm>
@@ -38,36 +39,6 @@ double number(const XmlRpc::XmlRpcValue& v, const std::string& key) {
         throw std::invalid_argument("nonfinite fleet field: " + key);
     }
     return result;
-}
-double cross(const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
-    return a.x() * b.y() - a.y() * b.x();
-}
-std::vector<Eigen::Vector2d> hull(std::vector<Eigen::Vector2d> points) {
-    std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
-        return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y());
-    });
-    points.erase(std::unique(points.begin(), points.end(),
-                             [](const auto& a, const auto& b) { return (a - b).norm() < 1e-10; }),
-                 points.end());
-    if (points.size() < 3) {
-        throw std::invalid_argument("degenerate obstacle projection");
-    }
-    std::vector<Eigen::Vector2d> h;
-    for (const auto& p : points) {
-        while (h.size() > 1 && cross(h.back() - h[h.size() - 2], p - h.back()) <= 0) {
-            h.pop_back();
-        }
-        h.push_back(p);
-    }
-    const auto lower = h.size();
-    for (auto it = points.rbegin() + 1; it != points.rend(); ++it) {
-        while (h.size() > lower && cross(h.back() - h[h.size() - 2], *it - h.back()) <= 0) {
-            h.pop_back();
-        }
-        h.push_back(*it);
-    }
-    h.pop_back();
-    return h;
 }
 Eigen::Quaterniond quaternion(const geometry_msgs::Quaternion& q) {
     Eigen::Quaterniond r(q.w, q.x, q.y, q.z);
@@ -109,10 +80,7 @@ class Coordinator {
         private_.param("frequency", frequency_, 50.0);
         private_.param("input_timeout", timeout_, 0.15);
         private_.param("world_frame", world_frame_, std::string("world"));
-        private_.param("geometry_library_topic", library_topic_,
-                       std::string("/xgc2_geometry/geometry_library"));
-        private_.param("obstacle_instances_topic", instances_topic_,
-                       std::string("/xgc2_geometry/static_body_instances"));
+        private_.param("scene_namespace", scene_namespace_, std::string("/xgc/scene"));
         private_.param("clearance", filter_.clearance, 0.08);
         private_.param("uncertainty_margin", filter_.uncertainty_margin, 0.03);
         private_.param("barrier_gain", filter_.barrier_gain, 1.0);
@@ -182,8 +150,9 @@ class Coordinator {
                 });
             entries_.push_back(std::move(e));
         }
-        library_sub_ = nh_.subscribe(library_topic_, 1, &Coordinator::library, this);
-        instances_sub_ = nh_.subscribe(instances_topic_, 1, &Coordinator::instances, this);
+        scene_sub_ = nh_.subscribe(scene_namespace_ + "/snapshot", 1, &Coordinator::scene, this);
+        scene_state_sub_ = nh_.subscribe(scene_namespace_ + "/state", 1, &Coordinator::sceneState, this);
+        scene_status_pub_ = nh_.advertise<xgc2_geometry_msgs::SceneConsumerStatus>(scene_namespace_ + "/consumer_status", 1, true);
     }
     void run() {
         ros::WallRate rate(frequency_);
@@ -306,100 +275,16 @@ class Coordinator {
             ROS_WARN_THROTTLE(2, "Reset pose rejected: %s", ex.what());
         }
     }
-    void library(const xgc2_geometry_msgs::GeometryLibrary::ConstPtr& m) {
-        library_ = *m;
-        have_library_ = true;
-        rebuildScene();
+    void sceneState(const xgc2_geometry_msgs::SceneState::ConstPtr& state) {
+        if (state->epoch == snapshot_.epoch && state->revision == snapshot_.revision &&
+            state->header.frame_id == world_frame_) scene_state_wall_ = ros::WallTime::now();
     }
-    void instances(const xgc2_geometry_msgs::ConvexBodyArray::ConstPtr& m) {
-        instances_ = *m;
-        have_instances_ = true;
-        rebuildScene();
-    }
-    void rebuildScene() {
+    void scene(const xgc2_geometry_msgs::SceneSnapshot::ConstPtr& snapshot) {
+        if (snapshot->epoch == snapshot_.epoch && snapshot->revision < snapshot_.revision) return;
+        snapshot_ = *snapshot;
         scene_valid_ = false;
-        if (!have_library_ || !have_instances_) {
-            return;
-        }
         try {
-            if (library_.header.frame_id != world_frame_ ||
-                instances_.header.frame_id != world_frame_) {
-                throw std::invalid_argument("scene frame mismatch");
-            }
-            std::map<std::string, xgc2_geometry_msgs::GeometryTemplate> templates;
-            for (const auto& t : library_.templates) {
-                if (!templates.emplace(t.type, t).second) {
-                    throw std::invalid_argument("duplicate geometry template");
-                }
-            }
-            std::vector<ConvexObstacle> scene;
-            std::set<int> ids;
-            for (const auto& body : instances_.instances) {
-                if (!ids.insert(body.id).second || !body.is_static) {
-                    throw std::invalid_argument("duplicate or dynamic obstacle");
-                }
-                if (body.velocity.linear.x != 0 || body.velocity.linear.y != 0 ||
-                    body.velocity.linear.z != 0 || body.velocity.angular.x != 0 ||
-                    body.velocity.angular.y != 0 || body.velocity.angular.z != 0) {
-                    throw std::invalid_argument(
-                        "moving obstacle unsupported in static reset scene");
-                }
-                const auto it = templates.find(body.geometry_type);
-                if (it == templates.end()) {
-                    throw std::invalid_argument("missing geometry template");
-                }
-                Eigen::Vector3d scale(body.scale.x, body.scale.y, body.scale.z),
-                    origin(body.pose.position.x, body.pose.position.y, body.pose.position.z);
-                if (!scale.allFinite() || !origin.allFinite() || scale.minCoeff() <= 0) {
-                    throw std::invalid_argument("invalid obstacle transform");
-                }
-                const auto rotation = quaternion(body.pose.orientation);
-                std::vector<Eigen::Vector3d> local;
-                Eigen::Vector3d extent;
-                if (body.geometry_type == "cube") {
-                    extent = {.5, .5, .5};
-                } else if (body.geometry_type == "sphere") {
-                    extent = {1, 1, 1};
-                } else if (body.geometry_type == "cylinder") {
-                    extent = {1, 1, .5};
-                } else {
-                    const bool poly = body.geometry_type.find("polytope") != std::string::npos ||
-                                      body.geometry_type.find("mesh") != std::string::npos;
-                    if (!poly) {
-                        throw std::invalid_argument("unsupported obstacle geometry: " +
-                                                    body.geometry_type);
-                    }
-                    for (const auto& p : it->second.support_points) {
-                        local.emplace_back(p.x, p.y, p.z);
-                    }
-                    if (local.size() < 4) {
-                        throw std::invalid_argument("incomplete polytope vertices");
-                    }
-                }
-                if (local.empty()) {
-                    for (int x : {-1, 1}) {
-                        for (int y : {-1, 1}) {
-                            for (int z : {-1, 1}) {
-                                local.emplace_back(x * extent.x(), y * extent.y(), z * extent.z());
-                            }
-                        }
-                    }
-                }
-                std::vector<Eigen::Vector2d> projected;
-                for (const auto& p : local) {
-                    if (!p.allFinite()) {
-                        throw std::invalid_argument("nonfinite obstacle vertex");
-                    }
-                    const Eigen::Vector3d world = origin + rotation * scale.cwiseProduct(p);
-                    if (!world.allFinite()) {
-                        throw std::invalid_argument("obstacle projection overflow");
-                    }
-                    projected.push_back(world.head<2>());
-                }
-                scene.push_back({std::to_string(body.id), hull(projected)});
-            }
-            std::sort(scene.begin(), scene.end(),
-                      [](const auto& a, const auto& b) { return a.id < b.id; });
+            auto scene = scene_projection::project(snapshot_, world_frame_);
             bool changed = scene.size() != obstacles_.size();
             if (!changed) {
                 for (std::size_t i = 0; i < scene.size(); ++i) {
@@ -429,6 +314,15 @@ class Coordinator {
             scene_error_ = e.what();
             ROS_WARN("Reset scene rejected: %s", e.what());
         }
+        xgc2_geometry_msgs::SceneConsumerStatus status;
+        status.header = snapshot_.header;
+        status.header.stamp = ros::Time::now();
+        status.epoch = snapshot_.epoch;
+        status.revision = snapshot_.revision;
+        status.consumer = "ugv-reset";
+        status.success = scene_valid_;
+        status.message = scene_valid_ ? "applied conservative planar projection (32 support halfspaces per part)" : scene_error_;
+        scene_status_pub_.publish(status);
     }
     void reply(Entry& e, uint8_t status, const Eigen::Vector3d& command,
                const std::string& reason) {
@@ -465,6 +359,10 @@ class Coordinator {
             active = active || e->robot.active;
         }
         if (!active) {
+            return;
+        }
+        if (scene_state_wall_.isZero() || (wall - scene_state_wall_).toSec() > 0.5) {
+            rejectActive("shared scene heartbeat expired");
             return;
         }
         if (!scene_valid_) {
@@ -643,11 +541,12 @@ class Coordinator {
     }
     ros::NodeHandle nh_, private_;
     std::vector<std::unique_ptr<Entry>> entries_;
-    ros::Subscriber library_sub_, instances_sub_;
-    xgc2_geometry_msgs::GeometryLibrary library_;
-    xgc2_geometry_msgs::ConvexBodyArray instances_;
-    bool have_library_ = false, have_instances_ = false, scene_valid_ = false;
-    std::string world_frame_, library_topic_, instances_topic_, scene_error_;
+    ros::Subscriber scene_sub_, scene_state_sub_;
+    ros::Publisher scene_status_pub_;
+    xgc2_geometry_msgs::SceneSnapshot snapshot_;
+    ros::WallTime scene_state_wall_;
+    bool scene_valid_ = false;
+    std::string world_frame_, scene_namespace_, scene_error_;
     std::vector<ConvexObstacle> obstacles_;
     Fence fence_;
     FilterConfig filter_;

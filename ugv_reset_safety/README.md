@@ -31,21 +31,20 @@ uncertainty bounds, and an explicit world-frame fence. Their Reset limits are
 vehicles before starting a new Reset session; the default session deadline is
 600 seconds, including waiting for other Reset groups.
 
-Obstacle input is `xgc2_geometry_msgs/GeometryLibrary` plus `ConvexBodyArray`.
-Default topics are `/xgc2_geometry/geometry_library` and
-`/xgc2_geometry/static_body_instances`. In Director-managed simulation, explicitly
-select `/xgc2/simulation/obstacles/geometry_library` and
-`/xgc2/simulation/obstacles/instances`. Do not subscribe competing maps. All data
-must already use the canonical pose frame (`world` by default). The scene must
-cover every external obstacle; the Director snapshot covers its managed prefix,
-not arbitrary unregistered Gazebo props. Static snapshots are latched; identical
-retransmissions preserve sessions, changed geometry cancels them.
+The coordinator consumes `xgc2_geometry_msgs/SceneSnapshot` and `SceneState`
+under the configured `scene_namespace` (default `/xgc/scene`). There is no
+separate geometry-library or static-instance subscription. An explicit empty
+snapshot is valid; absence/heartbeat expiry is not an empty scene.
 
-`cube`, `sphere`, `cylinder`, and polytope/mesh support-point templates are
-projected conservatively to convex 2D polygons. Primitive curved shapes use
-transformed bounding boxes. Received unsupported, malformed, or moving geometry rejects
-Reset. An absent scene is not treated as an empty scene. A valid explicitly
-empty snapshot is supported.
+Each compound part is projected independently into 32 supporting halfspaces
+in XY. This is an explicitly conservative planar outer approximation of the
+shared shape, including sphere/cylinder/capsule curves and oriented convex
+meshes; no hull is taken across a compound opening. Without a robot height
+envelope, overhead parts also project into XY and may conservatively block
+an otherwise traversable 3D passage. Scene revisions cancel an
+active Reset through the existing stopped/re-admission contract. Dynamic
+obstacles are explicitly refused because this controller certifies a static
+workspace. Applied/rejected revisions are published on `consumer_status`.
 
 ## Guidance and control
 

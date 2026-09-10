@@ -15,7 +15,7 @@ import rostest
 from geometry_msgs.msg import Point, Pose2D, PoseStamped, Twist
 from std_msgs.msg import String, UInt32
 from ugv_reset_safety.msg import ResetRequest, ResetResponse
-from xgc2_geometry_msgs.msg import ConvexBodyArray, ConvexBodyInstance, GeometryLibrary, GeometryTemplate
+from xgc2_geometry_msgs.msg import SceneSnapshot, SceneState, SceneObstacle, ScenePart, SceneObstacleState
 
 
 class ResetCoordinatorTransportTest(unittest.TestCase):
@@ -43,8 +43,10 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
         self.command_pub = rospy.Publisher(self.NS + "/command", String, queue_size=1)
         self.goal_pub = rospy.Publisher(self.NS + "/reset_pose", Pose2D, queue_size=1, latch=True)
         self.reply_pub = rospy.Publisher("/reset_fixture/controller_response", ResetResponse, queue_size=1)
-        self.geometry_pub = rospy.Publisher("/reset_fixture/geometry", GeometryLibrary, queue_size=1, latch=True)
-        self.instances_pub = rospy.Publisher("/reset_fixture/obstacles", ConvexBodyArray, queue_size=1, latch=True)
+        self.snapshot = None
+        self.scene_pub = rospy.Publisher("/reset_fixture/scene/snapshot", SceneSnapshot, queue_size=1, latch=True)
+        self.scene_state_pub = rospy.Publisher("/reset_fixture/scene/state", SceneState, queue_size=1)
+        self.scene_timer = rospy.Timer(rospy.Duration(.03), self.publish_scene_state)
         self.subscribers = [
             rospy.Subscriber(self.NS + "/cmd_vel", Twist, self.on_command, queue_size=1),
             rospy.Subscriber(self.NS + "/reset/request", ResetRequest, self.on_request, queue_size=1),
@@ -62,6 +64,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
 
     def tearDown(self):
         self.command_pub.publish(String(data="stop"))
+        self.scene_timer.shutdown()
         self.quit.set()
         self.thread.join(timeout=1.0)
 
@@ -153,25 +156,31 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
     def settled(self):
         return self.stopped() and max(abs(value) for value in self.actual) < 0.01
 
+    def publish_scene_state(self, _event):
+        if self.snapshot is None:
+            return
+        state = SceneState(epoch=self.snapshot.epoch, revision=self.snapshot.revision)
+        state.header.stamp = rospy.Time.now()
+        state.header.frame_id = "world"
+        state.obstacles = [SceneObstacleState(id=o.id, pose=o.pose) for o in self.snapshot.obstacles]
+        self.scene_state_pub.publish(state)
+
     def publish_scene(self, shape="cube", x=2.0):
-        library = GeometryLibrary()
-        library.header.stamp = rospy.Time.now()
-        library.header.frame_id = "world"
-        template = GeometryTemplate(type=shape, resolution=1)
-        template.support_points = [Point(x=0.5 * a, y=0.5 * b, z=0.5 * c)
-                                   for a in (-1, 1) for b in (-1, 1) for c in (-1, 1)]
-        library.templates = [template]
-        body = ConvexBodyInstance(id=1, name="far_fixture_box", geometry_type=shape, is_static=True)
-        body.pose.position.x = x
-        body.pose.position.y = 2.0
-        body.pose.orientation.w = 1.0
-        body.scale.x = body.scale.y = 0.3
-        body.scale.z = 0.5
-        instances = ConvexBodyArray()
-        instances.header = library.header
-        instances.instances = [body]
-        self.geometry_pub.publish(library)
-        self.instances_pub.publish(instances)
+        scene = SceneSnapshot(epoch="fixture", revision=(self.snapshot.revision + 1 if self.snapshot else 1))
+        scene.header.stamp = rospy.Time.now()
+        scene.header.frame_id = "world"
+        obstacle = SceneObstacle(id="far-box", name="far fixture box", motion_type="hold")
+        obstacle.pose.position.x = x
+        obstacle.pose.orientation.w = 1
+        part = ScenePart(id="body")
+        part.pose.orientation.w = 1
+        part.geometry.type = "box" if shape == "cube" else shape
+        part.geometry.size.x = part.geometry.size.y = part.geometry.size.z = .2
+        obstacle.parts = [part]
+        scene.obstacles = [obstacle]
+        self.snapshot = scene
+        self.scene_pub.publish(scene)
+        self.publish_scene_state(None)
 
     def replay_cannot_restart(self, response):
         for _ in range(6):

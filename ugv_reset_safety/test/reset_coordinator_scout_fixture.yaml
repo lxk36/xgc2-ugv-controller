@@ -2,8 +2,7 @@
 frequency: 50.0
 input_timeout: 0.15
 world_frame: world
-geometry_library_topic: /reset_fixture/geometry
-obstacle_instances_topic: /reset_fixture/obstacles
+scene_namespace: /reset_fixture/scene
 clearance: 0.08
 uncertainty_margin: 0.03
 velocity_uncertainty: 0.10
