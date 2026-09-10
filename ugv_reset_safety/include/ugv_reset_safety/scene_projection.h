@@ -82,8 +82,8 @@ struct BodyState {
     Eigen::Vector3d angular = Eigen::Vector3d::Zero();
 };
 inline ConvexObstacle projectPart(const xgc2_geometry_msgs::SceneObstacle& obstacle,
-                                   const xgc2_geometry_msgs::ScenePart& part,
-                                   const BodyState& body, double extra) {
+                                  const xgc2_geometry_msgs::ScenePart& part, const BodyState& body,
+                                  double extra) {
     if (part.id.empty())
         throw std::invalid_argument("duplicate/empty scene part id");
     const Eigen::Quaterniond orientation = body.orientation * rotation(part.pose.orientation);
@@ -123,7 +123,7 @@ inline ConvexObstacle projectPart(const xgc2_geometry_msgs::SceneObstacle& obsta
     return projected;
 }
 inline void validateObstacle(const xgc2_geometry_msgs::SceneObstacle& obstacle,
-                              std::set<std::string>* obstacle_ids) {
+                             std::set<std::string>* obstacle_ids) {
     if (obstacle.id.empty() || !obstacle_ids->insert(obstacle.id).second || obstacle.parts.empty())
         throw std::invalid_argument("invalid obstacle identity or empty parts");
     const std::string type = motionType(obstacle);
@@ -161,9 +161,9 @@ inline double radiusBound(const ConvexObstacle& projected) {
         rho = std::max(rho, (vertex - projected.origin).norm());
     return rho;
 }
-inline std::vector<ConvexObstacle> projectBodies(
-    const xgc2_geometry_msgs::SceneSnapshot& scene,
-    const std::map<std::string, BodyState>& bodies, const std::string& frame, bool occupancy) {
+inline std::vector<ConvexObstacle> projectBodies(const xgc2_geometry_msgs::SceneSnapshot& scene,
+                                                 const std::map<std::string, BodyState>& bodies,
+                                                 const std::string& frame, bool occupancy) {
     if (scene.epoch.empty() || scene.header.frame_id != frame)
         throw std::invalid_argument("scene epoch/frame mismatch");
     std::vector<ConvexObstacle> result;
@@ -181,7 +181,7 @@ inline std::vector<ConvexObstacle> projectBodies(
             const double extra =
                 occupancy ? (speed + yaw_rate * radiusBound(live)) * occupancyHorizon() : 0.0;
             result.push_back(extra > 0.0 ? projectPart(obstacle, part, body, extra)
-                                          : std::move(live));
+                                         : std::move(live));
         }
     }
     if (bodies.size() != obstacle_ids.size())
@@ -198,7 +198,7 @@ inline std::map<std::string, BodyState> snapshotBodies(
     return bodies;
 }
 inline std::map<std::string, BodyState> liveBodies(const xgc2_geometry_msgs::SceneSnapshot& scene,
-                                                  const xgc2_geometry_msgs::SceneState& state) {
+                                                   const xgc2_geometry_msgs::SceneState& state) {
     if (state.epoch != scene.epoch || state.revision != scene.revision)
         throw std::invalid_argument("scene state epoch/revision mismatch");
     if (state.header.frame_id != scene.header.frame_id)
@@ -216,7 +216,7 @@ inline std::map<std::string, BodyState> liveBodies(const xgc2_geometry_msgs::Sce
 }
 // Rest-pose projection of a hold-only snapshot. Dynamic motion requires live().
 inline std::vector<ConvexObstacle> project(const xgc2_geometry_msgs::SceneSnapshot& scene,
-                                            const std::string& frame) {
+                                           const std::string& frame) {
     std::set<std::string> ids;
     for (const auto& obstacle : scene.obstacles) {
         validateObstacle(obstacle, &ids);
@@ -231,7 +231,7 @@ struct SceneGeometry {
     std::vector<ConvexObstacle> occupancy;
 };
 inline SceneGeometry live(const xgc2_geometry_msgs::SceneSnapshot& scene,
-                           const xgc2_geometry_msgs::SceneState& state, const std::string& frame) {
+                          const xgc2_geometry_msgs::SceneState& state, const std::string& frame) {
     if (scene.epoch.empty() || scene.header.frame_id != frame)
         throw std::invalid_argument("scene epoch/frame mismatch");
     const auto bodies = liveBodies(scene, state);

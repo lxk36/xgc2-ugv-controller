@@ -388,17 +388,18 @@ class Coordinator {
         status.consumer = "ugv-reset";
         status.generation = consumer_generation_;
         status.applied = scene_parsed_;
-        status.capability = scene_capability_.empty() ? (scene_parsed_ ? "ok" : "") : scene_capability_;
+        status.capability =
+            scene_capability_.empty() ? (scene_parsed_ ? "ok" : "") : scene_capability_;
         status.operational = scene_parsed_ && scene_valid_ && status.capability != "unsupported" &&
                              !scene_state_wall_.isZero() &&
                              (ros::WallTime::now() - scene_state_wall_).toSec() <= 0.5;
         status.success = status.applied;  // derived publish of applied, not a second authority
-        status.message = scene_parsed_
-                             ? (scene_valid_
-                                    ? "applied live planar projection with finite-horizon occupancy"
-                                    : (scene_error_.empty() ? "waiting for matching scene state"
-                                                            : scene_error_))
-                             : scene_error_;
+        status.message =
+            scene_parsed_
+                ? (scene_valid_
+                       ? "applied live planar projection with finite-horizon occupancy"
+                       : (scene_error_.empty() ? "waiting for matching scene state" : scene_error_))
+                : scene_error_;
         scene_status_pub_.publish(status);
     }
     void reply(Entry& e, uint8_t status, const Eigen::Vector3d& command,
