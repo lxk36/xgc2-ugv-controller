@@ -62,10 +62,12 @@ TEST(SceneProjection, KeepsCompoundOpeningAndStableIdentities) {
     scene.obstacles[0].parts.push_back(right);
     const auto parts = ugv_reset_safety::scene_projection::project(scene, "world");
     ASSERT_EQ(parts.size(), 2U);
-    for (const auto& vertex : parts[0].vertices)
+    for (const auto& vertex : parts[0].vertices) {
         EXPECT_LT(vertex.x(), -.7);
-    for (const auto& vertex : parts[1].vertices)
+    }
+    for (const auto& vertex : parts[1].vertices) {
         EXPECT_GT(vertex.x(), .7);
+    }
     scene.obstacles[0].parts.erase(scene.obstacles[0].parts.begin());
     const auto remaining = ugv_reset_safety::scene_projection::project(scene, "world");
     EXPECT_EQ(remaining[0].id, parts[1].id);
@@ -101,17 +103,20 @@ TEST(SceneProjection, LiveStateMovesDynamicGeometryWithoutUsingRestPose) {
     const auto geometry = ugv_reset_safety::scene_projection::live(scene, state, "world");
     ASSERT_EQ(geometry.live.size(), 1U);
     double xmin = std::numeric_limits<double>::infinity();
-    for (const auto& vertex : geometry.live[0].vertices)
+    for (const auto& vertex : geometry.live[0].vertices) {
         xmin = std::min(xmin, vertex.x());
+    }
     EXPECT_GT(xmin, 1.0);
     EXPECT_NEAR(geometry.live[0].velocity.x(), 0.4, 1e-12);
     EXPECT_GT(geometry.occupancy[0].vertices.size(), 2U);
     double occupancy_span = 0;
-    for (const auto& vertex : geometry.occupancy[0].vertices)
+    for (const auto& vertex : geometry.occupancy[0].vertices) {
         occupancy_span = std::max(occupancy_span, (vertex - geometry.live[0].origin).norm());
+    }
     double live_span = 0;
-    for (const auto& vertex : geometry.live[0].vertices)
+    for (const auto& vertex : geometry.live[0].vertices) {
         live_span = std::max(live_span, (vertex - geometry.live[0].origin).norm());
+    }
     EXPECT_GT(occupancy_span, live_span + 0.5);
 }
 TEST(SceneProjection, PausedDynamicUsesLivePoseWithZeroTwist) {

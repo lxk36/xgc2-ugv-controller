@@ -440,12 +440,18 @@ class Coordinator {
         if (!active) {
             return;
         }
-        if (scene_state_wall_.isZero() || (wall - scene_state_wall_).toSec() > 0.5) {
-            rejectActive("shared scene heartbeat expired");
-            return;
-        }
         if (!scene_parsed_) {
             rejectActive("scene unavailable: " + scene_error_);
+            return;
+        }
+        for (auto& e : entries_) {
+            if (e->robot.active && e->rejected) {
+                rejectActive(e->reason);
+                return;
+            }
+        }
+        if (scene_state_wall_.isZero() || (wall - scene_state_wall_).toSec() > 0.5) {
+            rejectActive("shared scene heartbeat expired");
             return;
         }
         if (!scene_valid_) {
