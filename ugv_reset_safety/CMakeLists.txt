@@ -46,4 +46,12 @@ if(CATKIN_ENABLE_TESTING)
       target_link_libraries(${case}_test ugv_reset_safety_math ${catkin_LIBRARIES} gtest_main)
     endif()
   endforeach()
+
+  # Large statistical campaigns reuse the exact deterministic scenario plant and
+  # independent rectangle collision audit, but are intentionally not attached to
+  # the normal run_tests target. tools/run_reset_monte_carlo.py shards this binary
+  # over many seeds; CI executes a small smoke campaign explicitly.
+  add_executable(reset_monte_carlo test/reset_monte_carlo_test.cpp)
+  add_dependencies(reset_monte_carlo ${catkin_EXPORTED_TARGETS})
+  target_link_libraries(reset_monte_carlo ugv_reset_safety_math ${catkin_LIBRARIES} gtest_main)
 endif()
