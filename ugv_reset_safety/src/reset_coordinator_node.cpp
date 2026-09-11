@@ -216,26 +216,21 @@ class Coordinator {
             scheduled_requested_.clear();
             selected_.clear();
             completed_.assign(entries_.size(), false);
-            last_admission_ = ros::WallTime::now();
+            bool others_collecting = false;
             for (const auto& peer : entries_) {
-                if (peer.get() != &e && peer->state == 5 &&
-                    (peer->measured_speed > 0.03 || std::abs(peer->measured_omega) > 0.05 ||
-                     peer->robot.previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance)) {
-                    e.rejected = true;
-                    e.reason = "new Reset member joined a moving batch; stop fleet and retry";
+                if (peer.get() != &e && peer->have_request) {
+                    others_collecting = true;
                 }
+            }
+            if (!others_collecting) {
+                last_admission_ = ros::WallTime::now();
             }
             const auto wall = ros::WallTime::now();
             if (!e.have_pose || (wall - e.pose_wall).toSec() > timeout_ ||
                 (now - e.pose_stamp).toSec() < 0 || (now - e.pose_stamp).toSec() > timeout_ ||
-                (wall - e.state_wall).toSec() > timeout_ ||
-                (e.state != 1 && e.state != 2 && e.state != 5) || e.measured_speed > 0.03 ||
-                std::abs(e.measured_omega) > 0.05 ||
-                applied.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance) {
+                (wall - e.state_wall).toSec() > timeout_) {
                 e.rejected = true;
-                e.reason = "reset requires measured stationary start";
-            } else {
-                e.robot.previous.setZero();
+                e.reason = "reset pose/state unavailable at request";
             }
         }
         if (r.target.x != e.frozen_target.x || r.target.y != e.frozen_target.y ||
@@ -462,6 +457,22 @@ class Coordinator {
             rejectActive("coordinator deadline missed");
             return;
         }
+        bool cohort_incomplete = false;
+        for (const auto& e : entries_) {
+            if (e->state != 5) {
+                cohort_incomplete = true;
+                break;
+            }
+        }
+        if ((wall - last_admission_).toSec() < timeout_ && cohort_incomplete) {
+            for (auto& e : entries_) {
+                if (e->robot.active) {
+                    reply(*e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
+                          "collecting reset batch");
+                }
+            }
+            return;
+        }
         for (auto& e : entries_) {
             if (!e->have_pose || (wall - e->pose_wall).toSec() > timeout_ ||
                 (now - e->pose_stamp).toSec() < 0 || (now - e->pose_stamp).toSec() > timeout_ ||
@@ -480,7 +491,6 @@ class Coordinator {
             }
             e->robot.position = e->measured_position;
             e->robot.yaw = e->measured_yaw;
-            // Inactive peers must be measured stopped before their slew state can reset.
             if (!e->robot.active) {
                 e->robot.previous.setZero();
             }
@@ -488,17 +498,6 @@ class Coordinator {
                 rejectActive(e->reason);
                 return;
             }
-        }
-        // Collect a command fan-out while everyone remains stopped. A member
-        // joining an already moving batch is rejected in request().
-        if ((wall - last_admission_).toSec() < timeout_) {
-            for (auto& e : entries_) {
-                if (e->robot.active) {
-                    reply(*e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
-                          "collecting reset batch");
-                }
-            }
-            return;
         }
         std::vector<Robot> robots;
         std::vector<ResetTarget> targets;
@@ -512,13 +511,6 @@ class Coordinator {
             requested.push_back(e->robot.active);
         }
         if (!schedule_ready_) {
-            for (const auto& entry : entries_) {
-                if (entry->measured_speed > 0.03 || std::abs(entry->measured_omega) > 0.05 ||
-                    entry->robot.previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance) {
-                    rejectActive("Reset batch must remain stopped during admission");
-                    return;
-                }
-            }
             schedule_ = FleetSchedule(filter_.clearance + filter_.uncertainty_margin);
             const auto initialized = schedule_.initialize(robots, targets);
             if (!initialized.ok()) {

@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <functional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -33,18 +32,15 @@ struct ScheduleResult {
     }
 };
 
-// Batch scheduler for goal-occupancy dependencies, not a complete multi-agent
-// planner. i -> j means i's goal is occupied by j's initial/current footprint.
-// Sink strongly connected components run first; only singleton and two-robot
-// components are supported by the tested nominal/pair-passing coordinator.
-// Larger cycles and incompatible targets are rejected before any group starts.
+// Batch admission for one Reset cohort, not a complete multi-agent planner.
+// Every requesting robot starts together after /command reset. Target-overlap
+// and a nonparticipant sitting on a requested goal still reject before motion.
+// Goal occupancy cycles are not serialized; the joint CBF plus geometric
+// guidance own crossing traffic. Non-requesting robots stay parked obstacles.
 //
-// The caller must supply a fresh, stopped fleet on initialize(), freeze goals
-// for the batch, plan around parkedPeerObstacles(), and hard-hold every
-// nonselected robot in the joint safety solve. A completion bit means BOTH
-// original target arrival AND measured stop, not merely a zero desired input.
-// This graph policy does not prove geometric route existence, safe continuous
-// execution, deadlock freedom of arbitrary scenes, or arbitrary fleet counts.
+// A completion bit means BOTH original target arrival AND measured stop, not
+// merely a zero desired input. This does not prove geometric route existence,
+// safe continuous execution, deadlock freedom, or arbitrary fleet counts.
 class FleetSchedule {
    public:
     explicit FleetSchedule(double clearance = 0.1) : clearance_(clearance) {}
@@ -90,7 +86,6 @@ class FleetSchedule {
             return robots[left].id < robots[right].id;
         };
         std::sort(requesting.begin(), requesting.end(), lexical);
-        std::vector<std::vector<std::size_t>> edges(robots.size());
         for (std::size_t position = 0; position < requesting.size(); ++position) {
             const auto i = requesting[position];
             for (std::size_t other = position + 1; other < requesting.size(); ++other) {
@@ -112,88 +107,10 @@ class FleetSchedule {
                         ScheduleStatus::OccupiedTarget,
                         "Requested target occupied by stationary nonparticipant: " + robots[j].id);
                 }
-                edges[i].push_back(j);
-            }
-            std::sort(edges[i].begin(), edges[i].end(), lexical);
-        }
-
-        // Tarjan SCC, linear in the goal dependency graph size.
-        const std::size_t absent = robots.size();
-        std::vector<std::size_t> discovery(robots.size(), absent), low(robots.size(), absent);
-        std::vector<std::size_t> component(robots.size(), absent), stack;
-        std::vector<bool> on_stack(robots.size(), false);
-        std::vector<std::vector<std::size_t>> components;
-        std::size_t next_index = 0;
-        std::function<void(std::size_t)> visit = [&](std::size_t node) {
-            discovery[node] = low[node] = next_index++;
-            stack.push_back(node);
-            on_stack[node] = true;
-            for (const auto adjacent : edges[node]) {
-                if (discovery[adjacent] == absent) {
-                    visit(adjacent);
-                    low[node] = std::min(low[node], low[adjacent]);
-                } else if (on_stack[adjacent]) {
-                    low[node] = std::min(low[node], discovery[adjacent]);
-                }
-            }
-            if (low[node] != discovery[node]) {
-                return;
-            }
-            std::vector<std::size_t> members;
-            while (!stack.empty()) {
-                const auto member = stack.back();
-                stack.pop_back();
-                on_stack[member] = false;
-                component[member] = components.size();
-                members.push_back(member);
-                if (member == node) {
-                    break;
-                }
-            }
-            std::sort(members.begin(), members.end(), lexical);
-            components.push_back(std::move(members));
-        };
-        for (const auto robot : requesting) {
-            if (discovery[robot] == absent) {
-                visit(robot);
             }
         }
-        for (const auto& members : components) {
-            if (members.size() > 2) {
-                return reject(ScheduleStatus::UnsupportedCoordination,
-                              "Goal occupancy cycle exceeds the supported two-robot group");
-            }
-        }
-
-        // Deterministic reverse topological order: an occupant evacuates before
-        // the component whose goal it blocks. Ties use the smallest robot ID.
-        std::vector<bool> scheduled(components.size(), false);
-        while (groups_.size() < components.size()) {
-            std::size_t selected = components.size();
-            for (std::size_t candidate = 0; candidate < components.size(); ++candidate) {
-                if (scheduled[candidate]) {
-                    continue;
-                }
-                bool sink = true;
-                for (const auto robot : components[candidate]) {
-                    for (const auto dependency : edges[robot]) {
-                        if (component[dependency] != candidate &&
-                            !scheduled[component[dependency]]) {
-                            sink = false;
-                        }
-                    }
-                }
-                if (sink &&
-                    (selected == components.size() ||
-                     lexical(components[candidate].front(), components[selected].front()))) {
-                    selected = candidate;
-                }
-            }
-            if (selected == components.size()) {
-                return reject(ScheduleStatus::InvalidInput, "Invalid condensed dependency graph");
-            }
-            scheduled[selected] = true;
-            groups_.push_back(components[selected]);
+        if (!requesting.empty()) {
+            groups_.push_back(requesting);
         }
         completed_.assign(robots.size(), false);
         result_.status = groups_.empty() ? ScheduleStatus::Complete : ScheduleStatus::Ready;
@@ -255,8 +172,8 @@ class FleetSchedule {
 };
 
 // Exact rectangular footprints of every nonselected peer, frozen only for
-// the group's geometric route initialization. The safety QP must still include
-// these peers at their fresh actual pose as hard stationary constraints.
+// geometric route initialization. The safety QP must still include these
+// peers at their fresh actual pose as hard stationary constraints.
 inline std::vector<ConvexObstacle> parkedPeerObstacles(const std::vector<Robot>& robots,
                                                        const std::vector<bool>& selected_mask) {
     if (selected_mask.size() != robots.size()) {

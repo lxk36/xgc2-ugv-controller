@@ -485,8 +485,7 @@ TEST(ResetScenarios, TwoRobotsCrossingHeadOnAndPositionSwap) {
             const ResetTarget second_goal{
                 encounter == 0 ? Eigen::Vector2d(0.0, 2.0) : Eigen::Vector2d(-2.0, 0.0),
                 encounter == 2 ? 0.0 : second.yaw};
-            // Match the production batch timeout, including time spent
-            // stationary while an independent group reaches its goal.
+            // Match the production batch timeout. Both robots start together.
             const auto result =
                 runScenario({first, second}, {first_goal, second_goal}, {}, {}, 600.0);
             EXPECT_TRUE(result.completed)
@@ -593,8 +592,7 @@ TEST(ResetScenarios, SeededSparseLayoutsWithProductionScoutProfile) {
 TEST(ResetScenarios, FourScoutsCrossAndReturnWithProductionProfile) {
     const std::vector<Eigen::Vector2d> corners{{-2.5, -2.0}, {2.5, -2.0}, {2.5, 2.0}, {-2.5, 2.0}};
     for (const Plant plant : {Plant{}, Plant{0.229, 0.12, 0.16}}) {
-        // Each independently admitted stationary leg exchanges opposite
-        // corners. All four paths share the center and encounter new peers.
+        // Opposite-corner exchange; all four start together under the joint CBF.
         for (int leg = 0; leg < 2; ++leg) {
             std::vector<Robot> robots;
             std::vector<ResetTarget> goals;

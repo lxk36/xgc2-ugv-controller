@@ -22,21 +22,21 @@ ResetTarget target(double x, double y = 0.0) {
     return result;
 }
 
-TEST(FleetSchedule, EvacuatesTheSinkOfAGoalDependencyChainFirst) {
+TEST(FleetSchedule, StartsEveryRequesterTogether) {
     const std::vector<Robot> robots{robot("a", 0), robot("b", 2), robot("c", 4)};
     const std::vector<ResetTarget> targets{target(2), target(4), target(6)};
     FleetSchedule schedule;
     auto result = schedule.initialize(robots, targets);
     ASSERT_TRUE(result.ok()) << result.detail;
-    EXPECT_EQ(result.selected, std::vector<std::size_t>({2}));
+    EXPECT_EQ(result.selected, (std::vector<std::size_t>{0, 1, 2}));
     EXPECT_EQ(schedule.select({false, false, false}).selected, result.selected);
-    EXPECT_EQ(schedule.select({false, false, true}).selected, std::vector<std::size_t>({1}));
-    EXPECT_EQ(schedule.select({false, true, true}).selected, std::vector<std::size_t>({0}));
+    EXPECT_EQ(schedule.select({false, false, true}).selected, (std::vector<std::size_t>{0, 1}));
+    EXPECT_EQ(schedule.select({false, true, true}).selected, (std::vector<std::size_t>{0}));
     EXPECT_EQ(schedule.select({true, true, true}).status, ScheduleStatus::Complete);
     EXPECT_TRUE(schedule.select({true, true, true}).selected.empty());
 }
 
-TEST(FleetSchedule, SerializesTwoOppositeCornerSwapCycles) {
+TEST(FleetSchedule, OppositeCornerSwapIsOneCohort) {
     const std::vector<Robot> robots{robot("alpha", -2.5, -2), robot("bravo", 2.5, -2),
                                     robot("charlie", 2.5, 2), robot("delta", -2.5, 2)};
     const std::vector<ResetTarget> targets{target(2.5, 2), target(-2.5, 2), target(-2.5, -2),
@@ -44,11 +44,9 @@ TEST(FleetSchedule, SerializesTwoOppositeCornerSwapCycles) {
     FleetSchedule schedule;
     auto result = schedule.initialize(robots, targets);
     ASSERT_TRUE(result.ok()) << result.detail;
-    EXPECT_EQ(result.selected, std::vector<std::size_t>({0, 2}));
-    // A pair does not release the next group when only one member is stopped.
-    EXPECT_EQ(schedule.select({true, false, false, false}).selected, std::vector<std::size_t>({2}));
-    EXPECT_EQ(schedule.select({true, false, true, false}).selected,
-              std::vector<std::size_t>({1, 3}));
+    EXPECT_EQ(result.selected, (std::vector<std::size_t>{0, 1, 2, 3}));
+    EXPECT_EQ(schedule.select({true, false, false, false}).selected,
+              (std::vector<std::size_t>{1, 2, 3}));
     EXPECT_EQ(schedule.select({true, true, true, true}).status, ScheduleStatus::Complete);
 }
 
@@ -56,21 +54,18 @@ TEST(FleetSchedule, TieOrderDependsOnIdsRatherThanRosterOrder) {
     const std::vector<Robot> robots{robot("z", 0), robot("a", 2), robot("m", 4)};
     const std::vector<ResetTarget> targets{target(0, 3), target(2, 3), target(4, 3)};
     FleetSchedule schedule;
-    EXPECT_EQ(schedule.initialize(robots, targets).selected, std::vector<std::size_t>({1}));
-    EXPECT_EQ(schedule.select({false, true, false}).selected, std::vector<std::size_t>({2}));
-    EXPECT_EQ(schedule.select({false, true, true}).selected, std::vector<std::size_t>({0}));
+    EXPECT_EQ(schedule.initialize(robots, targets).selected, (std::vector<std::size_t>{1, 2, 0}));
+    EXPECT_EQ(schedule.select({false, true, false}).selected, (std::vector<std::size_t>{2, 0}));
 }
 
-TEST(FleetSchedule, RejectsThreeRobotCycleBeforeAnUnrelatedRobotCanMove) {
+TEST(FleetSchedule, AdmitsThreeRobotGoalCycleAsOneCohort) {
     const std::vector<Robot> robots{robot("first_free", -4), robot("x", 0), robot("y", 2),
                                     robot("z", 4)};
     const std::vector<ResetTarget> targets{target(-4, 3), target(2), target(4), target(0)};
     FleetSchedule schedule;
     const auto result = schedule.initialize(robots, targets);
-    EXPECT_EQ(result.status, ScheduleStatus::UnsupportedCoordination);
-    EXPECT_TRUE(result.selected.empty());
-    EXPECT_EQ(schedule.select({false, false, false, false}).status,
-              ScheduleStatus::UnsupportedCoordination);
+    EXPECT_EQ(result.status, ScheduleStatus::Ready);
+    EXPECT_EQ(result.selected, (std::vector<std::size_t>{0, 1, 2, 3}));
 }
 
 TEST(FleetSchedule, RejectsTargetsThatOverlapOrAreOccupiedByNonparticipants) {
@@ -94,8 +89,9 @@ TEST(FleetSchedule, RejectsInvalidRosterAndRegressedMeasuredCompletion) {
     EXPECT_EQ(schedule.initialize({robot("a", 0), robot("a", 2)}, {target(4), target(6)}).status,
               ScheduleStatus::InvalidInput);
     EXPECT_EQ(schedule.initialize(robots, {target(2), target(4)}).selected,
-              std::vector<std::size_t>({1}));
-    EXPECT_EQ(schedule.select({false, true}).selected, std::vector<std::size_t>({0}));
+              (std::vector<std::size_t>{0, 1}));
+    EXPECT_EQ(schedule.select({false, true}).selected, (std::vector<std::size_t>{0}));
+    EXPECT_EQ(schedule.select({true, true}).status, ScheduleStatus::Complete);
     const auto regressed = schedule.select({false, false});
     EXPECT_EQ(regressed.status, ScheduleStatus::InvalidInput);
     EXPECT_TRUE(regressed.selected.empty());

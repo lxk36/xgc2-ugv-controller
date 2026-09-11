@@ -27,9 +27,10 @@ simulation envelopes, not measured physical-robot certifications. They specify
 footprints, body-origin offsets, linear/yaw velocity limits, acceleration limits,
 uncertainty bounds, and an explicit world-frame fence. Their Reset limits are
 0.35 m/s per available translational channel and 0.5 rad/s, with 0.35 m/s² and
-0.6 rad/s² slew limits. The coordinator rejects a nonstationary start. Stop the
-vehicles before starting a new Reset session; the default session deadline is
-600 seconds, including waiting for other Reset groups.
+0.6 rad/s² slew limits. The default session deadline is
+600 seconds. Admission waits until every roster member is in Reset, then the
+whole requesting cohort starts together. A measured stop is not required to
+enter Reset after Custom1.
 
 The coordinator consumes `xgc2_geometry_msgs/SceneSnapshot` and `SceneState`
 under the configured `scene_namespace` (default `/xgc/scene`). There is no
@@ -67,18 +68,12 @@ Each session obtains a visibility-graph/Dijkstra route around inflated static
 polygons, then follows a finite lookahead point. This small geometric planner
 provides a way around obstacles that a purely local CBF may stop in front of;
 it is not a time-parameterized dynamic feasibility certificate. The route is
-cached, not repeatedly optimized. A frozen goal-occupancy graph orders the fleet
-by strongly connected components:
-a vehicle clears another's target first, with deterministic ordering of independent
-groups. One vehicle or a mutually dependent pair runs at a time; remaining robots
-are held at zero and included in route geometry. Pairs use persistent right-hand
-passage targets to break symmetric encounters. Target-overlap conflicts, a target
-occupied by a nonparticipating robot, and dependency cycles of more than two robots
-are explicitly rejected before motion. This bounded scheduler does not implement
-staging-place search for larger cycles. A short 150 ms admission interval collects
-the Reset command fan-out while holding all vehicles stationary; joins during
-motion or unfinished batch membership changes reject the batch. Collision constraints remain
-in the joint QP, so the approach is centralized for the small fleet.
+cached, not repeatedly optimized. After `/command reset` lands, every requesting
+robot is one cohort: they start together under the joint CBF. Target-overlap
+conflicts and a target occupied by a nonparticipating robot still reject before
+motion. A short 150 ms admission interval waits for the remaining roster to
+enter Reset while already-joined members hold zero; the cohort starts as soon
+as every member is in Reset. Collision constraints remain in the joint QP.
 
 Mecanum computes nominal world XY velocity and rotates it into body FLU using
 the current canonical pose yaw. It simultaneously applies wrapped shortest-angle
@@ -175,10 +170,11 @@ collision. The sparse and four-Scout cases use 0.62 m by 0.52 m bodies, the
 velocity bound, and 0.13 m geometric margin. Their perturbed plant uses
 `v_y = -0.229 * omega`, with 0.12 s linear and 0.16 s angular first-order lag.
 Commands update at 20 ms; physical rectangle clearance is checked at 2 ms plant
-substeps. The four-Scout exchanges take about four minutes (236–245 s), including
-waiting for the other pair. These finite fixtures do not establish convergence
-for arbitrary initial layouts, larger occupancy cycles, unmodelled obstacles,
-or physical robots. Scout terminal yaw is reported but is not an arrival
+substeps. Occupancy-group serialization on source `f103a7f` finished the
+four-Scout exchanges in about four minutes (236–245 s) because one pair waited.
+That timing is not this revision's contract: all four start together. These
+finite fixtures do not establish convergence for arbitrary initial layouts,
+unmodelled obstacles, or physical robots. Scout terminal yaw is reported but is not an arrival
 criterion. Focused Mecanum tests also cover heading-only resets, wrapped-angle
 sweeps, and simultaneous XY/yaw convergence through the CBF while checking
 physical rectangle corners at 2 ms intervals.
