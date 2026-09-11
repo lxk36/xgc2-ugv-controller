@@ -33,6 +33,20 @@ catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}" \
   run_tests_mecanum_ugv_controller \
   run_tests_ugv_reset_safety
 catkin_test_results
+
+# A small campaign runs on every source CI revision. Large campaigns use the
+# sharded Python driver and are deliberately kept out of the normal test target.
+XGC_RESET_MC_CASES=6 \
+XGC_RESET_MC_SEED=20260912 \
+XGC_RESET_MC_MODE=mixed \
+XGC_RESET_MC_ROBOTS_MIN=1 \
+XGC_RESET_MC_ROBOTS_MAX=4 \
+XGC_RESET_MC_OBSTACLES_MIN=0 \
+XGC_RESET_MC_OBSTACLES_MAX=4 \
+XGC_RESET_MC_MAX_TIME=180 \
+  "$work_dir/devel/lib/ugv_reset_safety/reset_monte_carlo" \
+    --gtest_filter=ResetMonteCarlo.Campaign --gtest_color=no
+
 DESTDIR="$install_root" catkin_make -j"${parallel_jobs}" -l"${parallel_jobs}" install \
   -DCMAKE_INSTALL_PREFIX=/opt/ros/noetic \
   -DCMAKE_BUILD_TYPE=Release
