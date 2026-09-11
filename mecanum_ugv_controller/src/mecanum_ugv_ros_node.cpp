@@ -123,7 +123,7 @@ class MecanumUgvRosNode {
                           config_.reset_initial_yaw);
         config_.control_rate_hz = finitePositiveOr(config_.control_rate_hz, 500.0);
         config_.state_timeout = finitePositiveOr(config_.state_timeout, 0.2);
-        config_.command_publish_rate_hz = finitePositiveOr(config_.command_publish_rate_hz, 50.0);
+        config_.command_publish_rate_hz = finitePositiveOr(config_.command_publish_rate_hz, 30.0);
         config_.idle_cmd_rate_hz = finitePositiveOr(config_.idle_cmd_rate_hz, 5.0);
         config_.status_publish_rate_hz = finitePositiveOr(config_.status_publish_rate_hz, 5.0);
         config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 600.0);

@@ -12,7 +12,7 @@ namespace mecanum_ugv_controller {
 struct ControllerConfig {
     double control_rate_hz{500.0};
     double state_timeout{0.2};
-    double command_publish_rate_hz{50.0};
+    double command_publish_rate_hz{30.0};
     double idle_cmd_rate_hz{5.0};
     double status_publish_rate_hz{5.0};
     bool auto_start_tracking{false};

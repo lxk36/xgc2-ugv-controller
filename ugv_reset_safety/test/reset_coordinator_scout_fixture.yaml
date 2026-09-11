@@ -1,6 +1,7 @@
 # Isolated native Scout owner with a declared synthetic slip/lag envelope.
 frequency: 50.0
 input_timeout: 0.15
+state_timeout: 1.0
 world_frame: world
 scene_namespace: /reset_fixture/scene
 clearance: 0.08

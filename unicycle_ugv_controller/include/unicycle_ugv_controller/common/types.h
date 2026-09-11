@@ -54,7 +54,7 @@ struct ControllerConfig {
     double state_timeout{0.2};
     double solve_timeout{0.05};
     double result_timeout{0.1};
-    double command_publish_rate_hz{50.0};
+    double command_publish_rate_hz{30.0};
     double idle_cmd_rate_hz{5.0};
     double nmpc_request_rate_hz{100.0};
     bool auto_start_tracking{false};

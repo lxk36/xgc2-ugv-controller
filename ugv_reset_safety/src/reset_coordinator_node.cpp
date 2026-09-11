@@ -81,6 +81,7 @@ class Coordinator {
     Coordinator() : private_("~") {
         private_.param("frequency", frequency_, 50.0);
         private_.param("input_timeout", timeout_, 0.15);
+        private_.param("state_timeout", state_timeout_, 1.0);
         private_.param("world_frame", world_frame_, std::string("world"));
         private_.param("scene_namespace", scene_namespace_, std::string("/xgc/scene"));
         private_.param("clearance", filter_.clearance, 0.08);
@@ -95,7 +96,8 @@ class Coordinator {
             throw std::invalid_argument("explicit fence required");
         }
         if (!std::isfinite(frequency_) || frequency_ < 10 || !std::isfinite(timeout_) ||
-            timeout_ <= 0 || timeout_ > 0.5) {
+            timeout_ <= 0 || timeout_ > 0.5 || !std::isfinite(state_timeout_) ||
+            state_timeout_ < 0.5 || state_timeout_ > 2.0) {
             throw std::invalid_argument("invalid timing configuration");
         }
         XmlRpc::XmlRpcValue roster;
@@ -143,8 +145,7 @@ class Coordinator {
                 ns + "/pose", 1,
                 [this, n](const geometry_msgs::PoseStamped::ConstPtr& m) { pose(n, *m); });
             e->state_sub = nh_.subscribe<std_msgs::String>(
-                ns + "/custom/statustext",
-                1, [this, n](const std_msgs::String::ConstPtr& m) {
+                ns + "/custom/statustext", 1, [this, n](const std_msgs::String::ConstPtr& m) {
                     entries_[n]->state = m->data;
                     entries_[n]->state_wall = ros::WallTime::now();
                 });
@@ -227,7 +228,7 @@ class Coordinator {
             const auto wall = ros::WallTime::now();
             if (!e.have_pose || (wall - e.pose_wall).toSec() > timeout_ ||
                 (now - e.pose_stamp).toSec() < 0 || (now - e.pose_stamp).toSec() > timeout_ ||
-                (wall - e.state_wall).toSec() > timeout_) {
+                (wall - e.state_wall).toSec() > state_timeout_) {
                 e.rejected = true;
                 e.reason = "reset pose/state unavailable at request";
             }
@@ -426,8 +427,8 @@ class Coordinator {
         last_ros_tick_ = now;
         bool active = false;
         for (auto& e : entries_) {
-            e->robot.active =
-                e->have_request && (wall - e->request_wall).toSec() <= timeout_ && e->state == "Reset";
+            e->robot.active = e->have_request && (wall - e->request_wall).toSec() <= timeout_ &&
+                              e->state == "Reset";
             active = active || e->robot.active;
         }
         publishStatus();
@@ -475,7 +476,7 @@ class Coordinator {
         for (auto& e : entries_) {
             if (!e->have_pose || (wall - e->pose_wall).toSec() > timeout_ ||
                 (now - e->pose_stamp).toSec() < 0 || (now - e->pose_stamp).toSec() > timeout_ ||
-                (wall - e->state_wall).toSec() > timeout_) {
+                (wall - e->state_wall).toSec() > state_timeout_) {
                 rejectActive("fleet pose/state unavailable");
                 return;
             }
@@ -639,7 +640,7 @@ class Coordinator {
     bool schedule_ready_ = false;
     std::vector<bool> scheduled_requested_, selected_, completed_;
     ros::WallTime last_admission_;
-    double frequency_ = 50, timeout_ = .15;
+    double frequency_ = 50, timeout_ = .15, state_timeout_ = 1.0;
     uint32_t consumer_generation_ = 1;
     ros::WallTime last_tick_;
     ros::Time last_ros_tick_;

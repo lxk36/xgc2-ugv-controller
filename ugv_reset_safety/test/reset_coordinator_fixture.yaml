@@ -1,6 +1,7 @@
 # Isolated ROS transport / kinematic fixture, not a vehicle dynamics model.
 frequency: 50.0
 input_timeout: 0.15
+state_timeout: 1.0
 world_frame: world
 scene_namespace: /reset_fixture/scene
 clearance: 0.08

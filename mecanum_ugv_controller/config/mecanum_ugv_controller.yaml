@@ -5,8 +5,8 @@ pose_topic: "pose"
 reset_pose_topic: "reset_pose"
 cmd_vel_topic: "cmd_vel"
 state_timeout: 0.2
-# GCS→vehicle /cmd_vel over swarm_ros_bridge. Must stay ≤ GCS send max_freq 50.
-command_publish_rate_hz: 50.0
+# Controller chooses 30 Hz on both UGV types. GCS swarm_ros_bridge send max_freq 100 is the air ceiling.
+command_publish_rate_hz: 30.0
 idle_cmd_rate_hz: 5.0
 status_publish_rate_hz: 5.0
 auto_start_tracking: false

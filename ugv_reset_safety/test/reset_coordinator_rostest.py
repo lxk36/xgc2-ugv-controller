@@ -302,7 +302,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
         self.wait(self.moving, 3.0, "new Reset generation should run after a measured stop")
         with self.lock:
             self.publish_pose = False
-        self.wait(lambda: self.stopped() and self.state in (1, 2), 0.6,
+        self.wait(lambda: self.stopped() and self.state == "Reset", 0.6,
                   "loss of canonical pose must stop and leave Reset")
 
 

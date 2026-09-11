@@ -16,7 +16,7 @@
     <arg name="cmd_vel_topic" default="cmd_vel"/>
 
     <arg name="state_timeout" default="0.2"/>
-    <arg name="command_publish_rate_hz" default="50.0"/>
+    <arg name="command_publish_rate_hz" default="30.0"/>
     <arg name="idle_cmd_rate_hz" default="5.0"/>
     <arg name="auto_start_tracking" default="false"/>
     <arg name="platform_pose_topic" default="pose"/>
