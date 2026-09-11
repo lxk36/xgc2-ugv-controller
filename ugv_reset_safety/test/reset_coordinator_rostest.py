@@ -13,7 +13,7 @@ import unittest
 import rospy
 import rostest
 from geometry_msgs.msg import Point, Pose2D, PoseStamped, Twist
-from std_msgs.msg import String, UInt32
+from std_msgs.msg import String
 from ugv_reset_safety.msg import ResetRequest, ResetResponse
 from xgc2_geometry_msgs.msg import SceneSnapshot, SceneState, SceneObstacle, ScenePart, SceneObstacleState
 
@@ -32,7 +32,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
         self.pose = [-0.6, 0.25, 0.35]
         self.command = [0.0, 0.0, 0.0]
         self.actual = [0.0, 0.0, 0.0]
-        self.state = 0
+        self.state = ""
         self.publish_pose = True
         self.deliver = True
         self.requests = []
@@ -51,12 +51,12 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             rospy.Subscriber(self.NS + "/cmd_vel", Twist, self.on_command, queue_size=1),
             rospy.Subscriber(self.NS + "/reset/request", ResetRequest, self.on_request, queue_size=1),
             rospy.Subscriber(self.NS + "/reset/response", ResetResponse, self.on_response, queue_size=1),
-            rospy.Subscriber(self.NS + "/alg/" + self.owner_type + "/status/control_state", UInt32,
+            rospy.Subscriber(self.NS + "/custom/statustext", String,
                              self.on_state, queue_size=1),
         ]
         self.thread = threading.Thread(target=self.plant, daemon=True)
         self.thread.start()
-        self.wait(lambda: self.state == 2 and self.goal_pub.get_num_connections() > 0 and
+        self.wait(lambda: self.state == "Ready" and self.goal_pub.get_num_connections() > 0 and
                   self.command_pub.get_num_connections() > 0 and self.reply_pub.get_num_connections() > 0,
                   5.0, "native owner must become Ready from canonical poses")
         self.goal_pub.publish(Pose2D(x=0.0, y=0.0, theta=0.0))
@@ -193,7 +193,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
         # Absence of scene data is not an implicitly empty obstacle map.
         generation = self.reset()
         self.wait(lambda: any(r.generation == generation and r.status == ResetResponse.REJECTED
-                              for r in self.responses) and self.state == 2,
+                              for r in self.responses) and self.state == "Ready",
                   3.0, "missing scene must reject Reset")
         with self.lock:
             self.assertTrue(self.stopped())
@@ -206,7 +206,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
         # survive and match the request, while the echoed stamp stays exact.
         generation = self.reset()
         self.wait(self.moving, 3.0, "valid coordinator response must reach native cmd_vel")
-        self.wait(lambda: self.state == 2 and any(r.generation == generation and
+        self.wait(lambda: self.state == "Ready" and any(r.generation == generation and
                   r.status == ResetResponse.ARRIVED for r in self.responses),
                   45.0 if self.scout else 15.0,
                   "real coordinator and native owner should reach the simple target")
@@ -241,7 +241,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             generation = self.reset()
             self.wait(lambda: self.command[2] > 0.015, 3.0,
                       "Mecanum at target XY must still turn toward its target yaw")
-            self.wait(lambda: self.state == 2 and any(r.generation == generation and
+            self.wait(lambda: self.state == "Ready" and any(r.generation == generation and
                       r.status == ResetResponse.ARRIVED for r in self.responses),
                       12.0, "heading-only Mecanum Reset must arrive and stop")
             with self.lock:
@@ -264,7 +264,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
                 previous_running = next(r for r in reversed(self.responses)
                                         if r.generation == generation and r.status == ResetResponse.RUNNING)
             self.publish_scene(shape=shape, x=x)
-            self.wait(lambda: self.state == 2 and self.stopped() and
+            self.wait(lambda: self.state == "Ready" and self.stopped() and
                       any(r.generation == generation and r.status == ResetResponse.REJECTED and
                           expected in r.reason for r in self.responses),
                       2.0, "invalid or changed scene must reject active reset")
@@ -290,7 +290,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
                   self.requests[-1].applied_command.angular.z == 0.0,
                   0.2, "expired response must acknowledge the emitted zero, not a pending proposal")
         self.command_pub.publish(String(data="stop"))
-        self.wait(lambda: self.state == 2, 2.0, "Stop must cancel Reset")
+        self.wait(lambda: self.state == "Ready", 2.0, "Stop must cancel Reset")
         self.replay_cannot_restart(late)
 
         # A new generation may run; loss of canonical pose then fails closed.

@@ -14,7 +14,7 @@ struct ControllerConfig {
     double state_timeout{0.2};
     double command_publish_rate_hz{50.0};
     double idle_cmd_rate_hz{5.0};
-    double status_publish_rate_hz{50.0};
+    double status_publish_rate_hz{5.0};
     bool auto_start_tracking{false};
     double heading_target_yaw{0.0};
     double track_kp_yaw{1.2};

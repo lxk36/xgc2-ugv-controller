@@ -1,6 +1,6 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <ros/ros.h>
-#include <std_msgs/UInt32.h>
+#include <std_msgs/String.h>
 #include <ugv_reset_safety/ResetRequest.h>
 #include <ugv_reset_safety/ResetResponse.h>
 #include <ugv_reset_safety/fleet_guidance.h>
@@ -71,7 +71,8 @@ class Coordinator {
         double measured_yaw = 0, measured_speed = 0, measured_omega = 0;
         bool have_pose = false, have_request = false, have_generation = false, planned = false,
              rejected = false;
-        uint32_t generation = 0, state = 0;
+        uint32_t generation = 0;
+        std::string state;
         geometry_msgs::Pose2D frozen_target;
         std::string reason;
     };
@@ -141,11 +142,9 @@ class Coordinator {
             e->pose_sub = nh_.subscribe<geometry_msgs::PoseStamped>(
                 ns + "/pose", 1,
                 [this, n](const geometry_msgs::PoseStamped::ConstPtr& m) { pose(n, *m); });
-            e->state_sub = nh_.subscribe<std_msgs::UInt32>(
-                ns + (e->robot.type == RobotType::Unicycle
-                          ? "/alg/unicycle_ugv_controller/status/control_state"
-                          : "/alg/mecanum_ugv_controller/status/control_state"),
-                1, [this, n](const std_msgs::UInt32::ConstPtr& m) {
+            e->state_sub = nh_.subscribe<std_msgs::String>(
+                ns + "/custom/statustext",
+                1, [this, n](const std_msgs::String::ConstPtr& m) {
                     entries_[n]->state = m->data;
                     entries_[n]->state_wall = ros::WallTime::now();
                 });
@@ -428,7 +427,7 @@ class Coordinator {
         bool active = false;
         for (auto& e : entries_) {
             e->robot.active =
-                e->have_request && (wall - e->request_wall).toSec() <= timeout_ && e->state == 5;
+                e->have_request && (wall - e->request_wall).toSec() <= timeout_ && e->state == "Reset";
             active = active || e->robot.active;
         }
         publishStatus();
@@ -459,7 +458,7 @@ class Coordinator {
         }
         bool cohort_incomplete = false;
         for (const auto& e : entries_) {
-            if (e->state != 5) {
+            if (e->state != "Reset") {
                 cohort_incomplete = true;
                 break;
             }
@@ -480,7 +479,7 @@ class Coordinator {
                 rejectActive("fleet pose/state unavailable");
                 return;
             }
-            if (e->state != 1 && e->state != 2 && e->state != 5) {
+            if (e->state != "SelfCheck" && e->state != "Ready" && e->state != "Reset") {
                 rejectActive("fleet member is outside reset/stop states");
                 return;
             }

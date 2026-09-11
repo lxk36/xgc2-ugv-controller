@@ -1,7 +1,7 @@
 #pragma once
 
 #include <ros/ros.h>
-#include <std_msgs/UInt32.h>
+#include <std_msgs/String.h>
 #include <ugv_reset_safety/reset_client.h>
 
 #include <memory>
@@ -59,11 +59,9 @@ class UnicycleUgvRosNode {
     std::string active_sampled_topic_{"alg/unicycle_reference_trajectory/active/sampled"};
     std::string pva_reference_topic_{"alg/reference/pva"};
     std::string cmd_vel_topic_{"cmd_vel"};
-    std::string control_state_topic_{"alg/unicycle_ugv_controller/status/control_state"};
-    std::string health_state_topic_{"alg/unicycle_ugv_controller/status/health_state"};
-    double status_publish_rate_hz_{10.0};
+    std::string control_state_topic_{"custom/statustext"};
+    double status_publish_rate_hz_{5.0};
     ros::Publisher control_state_pub_;
-    ros::Publisher health_state_pub_;
     ros::Time last_status_stamp_;
     ::state_machine::StateId last_logged_control_state_{0U};
     ::state_machine::StateId last_logged_health_state_{0U};

@@ -4,12 +4,12 @@
 #include <gtest/gtest.h>
 #include <ros/ros.h>
 #include <std_msgs/String.h>
-#include <std_msgs/UInt32.h>
 #include <ugv_reset_safety/ResetRequest.h>
 #include <ugv_reset_safety/ResetResponse.h>
 
 #include <cmath>
 #include <functional>
+#include <string>
 
 namespace {
 
@@ -59,11 +59,11 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
             reply.command.linear.x = 0.1;
             safe_pub.publish(reply);
         });
-    uint32_t control_state = 0;
+    std::string control_state;
     geometry_msgs::Twist last_cmd;
-    ros::Subscriber state_sub = nh.subscribe<std_msgs::UInt32>(
-        "/ugv_test/alg/mecanum_ugv_controller/status/control_state", 10,
-        [&](const std_msgs::UInt32::ConstPtr& msg) { control_state = msg->data; });
+    ros::Subscriber state_sub = nh.subscribe<std_msgs::String>(
+        "/ugv_test/custom/statustext", 10,
+        [&](const std_msgs::String::ConstPtr& msg) { control_state = msg->data; });
     ros::Subscriber cmd_sub = nh.subscribe<geometry_msgs::Twist>(
         "/ugv_test/cmd_vel", 10,
         [&](const geometry_msgs::Twist::ConstPtr& msg) { last_cmd = *msg; });
@@ -79,7 +79,7 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
     ASSERT_TRUE(waitFor(
         [&]() {
             pose_pub.publish(makePose(0.0, 0.0, 0.0, ros::Time::now()));
-            return control_state == 2u;
+            return control_state == "Ready";
         },
         3.0))
         << "expected Ready";
@@ -90,7 +90,7 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
     reset_pub.publish(goal);
     ros::Duration(0.05).sleep();
     ros::spinOnce();
-    EXPECT_EQ(control_state, 2u) << "reset_pose must not drive the state machine";
+    EXPECT_EQ(control_state, "Ready") << "reset_pose must not drive the state machine";
 
     std_msgs::String reset;
     reset.data = "reset";
@@ -98,7 +98,7 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
     ASSERT_TRUE(waitFor(
         [&]() {
             pose_pub.publish(makePose(0.0, 0.0, 0.0, ros::Time::now()));
-            return control_state == 5u;
+            return control_state == "Reset";
         },
         2.0))
         << "expected Reset";
@@ -122,7 +122,7 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
     ASSERT_TRUE(waitFor(
         [&]() {
             pose_pub.publish(makePose(50.0, 0.0, 0.0, ros::Time::now()));
-            return control_state == 1u;
+            return control_state == "SelfCheck";
         },
         2.0))
         << "fence should SelfCheck";
@@ -130,14 +130,14 @@ TEST(MecanumRosSandbox, PoseCommandFenceAndDrop) {
     ASSERT_TRUE(waitFor(
         [&]() {
             pose_pub.publish(makePose(0.0, 0.0, 0.0, ros::Time::now()));
-            return control_state == 2u;
+            return control_state == "Ready";
         },
         3.0))
         << "back inside fence -> Ready";
 
     ros::Duration(0.5).sleep();
     ros::spinOnce();
-    EXPECT_EQ(control_state, 1u) << "dropped pose should SelfCheck";
+    EXPECT_EQ(control_state, "SelfCheck") << "dropped pose should SelfCheck";
 }
 
 int main(int argc, char** argv) {

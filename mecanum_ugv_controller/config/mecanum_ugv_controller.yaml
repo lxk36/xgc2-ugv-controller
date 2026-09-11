@@ -1,12 +1,14 @@
+# 500 Hz is the local event pump (T10/T17), not Wi-Fi.
 control_rate_hz: 500.0
 queue_size: 10
 pose_topic: "pose"
 reset_pose_topic: "reset_pose"
 cmd_vel_topic: "cmd_vel"
 state_timeout: 0.2
+# GCS→vehicle /cmd_vel over swarm_ros_bridge. Must stay ≤ GCS send max_freq 50.
 command_publish_rate_hz: 50.0
 idle_cmd_rate_hz: 5.0
-status_publish_rate_hz: 50.0
+status_publish_rate_hz: 5.0
 auto_start_tracking: false
 reference_twist_topic: "alg/reference/twist"
 heading_target_yaw: 0.0

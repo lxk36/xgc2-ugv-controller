@@ -4,7 +4,6 @@
 #include <geometry_msgs/TwistStamped.h>
 #include <ros/ros.h>
 #include <std_msgs/String.h>
-#include <std_msgs/UInt32.h>
 #include <ugv_reset_safety/reset_client.h>
 
 #include <algorithm>
@@ -44,7 +43,7 @@ class MecanumUgvRosNode {
         controller_.setConfig(config_);
         seedResetTarget();
         cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>(cmd_vel_topic_, 1);
-        control_state_pub_ = nh_.advertise<std_msgs::UInt32>(control_state_topic_, queue_size_);
+        control_state_pub_ = nh_.advertise<std_msgs::String>(control_state_topic_, queue_size_);
         command_sub_ =
             nh_.subscribe("command", queue_size_, &MecanumUgvRosNode::commandCallback, this);
         pose_sub_ = nh_.subscribe(pose_topic_, queue_size_, &MecanumUgvRosNode::poseCallback, this);
@@ -78,9 +77,11 @@ class MecanumUgvRosNode {
             reset_client_.update({state_.x, state_.y, state_.yaw}, state_.stamp,
                                  controller_.healthReady());
             if (status_gate_.due(now, 1.0 / config_.status_publish_rate_hz)) {
-                std_msgs::UInt32 status;
-                status.data = static_cast<uint32_t>(
-                    controller_.stateMachine().currentState(region_type::CONTROL));
+                std_msgs::String status;
+                status.data = controller_.stateMachine().currentStateName(region_type::CONTROL);
+                if (status.data.empty()) {
+                    status.data = "Unknown";
+                }
                 control_state_pub_.publish(status);
             }
             rate.sleep();
@@ -124,7 +125,7 @@ class MecanumUgvRosNode {
         config_.state_timeout = finitePositiveOr(config_.state_timeout, 0.2);
         config_.command_publish_rate_hz = finitePositiveOr(config_.command_publish_rate_hz, 50.0);
         config_.idle_cmd_rate_hz = finitePositiveOr(config_.idle_cmd_rate_hz, 5.0);
-        config_.status_publish_rate_hz = finitePositiveOr(config_.status_publish_rate_hz, 50.0);
+        config_.status_publish_rate_hz = finitePositiveOr(config_.status_publish_rate_hz, 5.0);
         config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 600.0);
         config_.track_kp_yaw = finitePositiveOr(config_.track_kp_yaw, 1.2);
         config_.max_linear_speed = finitePositiveOr(config_.max_linear_speed, 1.0);
@@ -258,7 +259,7 @@ class MecanumUgvRosNode {
     std::string reset_pose_topic_{"reset_pose"};
     std::string reference_twist_topic_{"alg/reference/twist"};
     std::string cmd_vel_topic_{"cmd_vel"};
-    std::string control_state_topic_{"alg/mecanum_ugv_controller/status/control_state"};
+    std::string control_state_topic_{"custom/statustext"};
     ros::Publisher cmd_vel_pub_;
     ros::Publisher control_state_pub_;
     ros::Subscriber command_sub_;

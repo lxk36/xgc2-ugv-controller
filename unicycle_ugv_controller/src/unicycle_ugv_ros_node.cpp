@@ -47,8 +47,7 @@ UnicycleUgvRosNode::UnicycleUgvRosNode(ros::NodeHandle& nh)
             nh_, controller_, pva_reference_topic_, post_input_event, queue_size_);
     }
 
-    control_state_pub_ = nh_.advertise<std_msgs::UInt32>(control_state_topic_, queue_size_);
-    health_state_pub_ = nh_.advertise<std_msgs::UInt32>(health_state_topic_, queue_size_);
+    control_state_pub_ = nh_.advertise<std_msgs::String>(control_state_topic_, queue_size_);
 
     command_input_ = std::make_unique<CommandInputProducer>(nh_, post_input_event, queue_size_);
     state_input_ =
@@ -116,7 +115,6 @@ void UnicycleUgvRosNode::loadParams() {
     private_nh_.param("pva_reference_topic", pva_reference_topic_, pva_reference_topic_);
     private_nh_.param("cmd_vel_topic", cmd_vel_topic_, cmd_vel_topic_);
     private_nh_.param("control_state_topic", control_state_topic_, control_state_topic_);
-    private_nh_.param("health_state_topic", health_state_topic_, health_state_topic_);
     private_nh_.param("status_publish_rate_hz", status_publish_rate_hz_, status_publish_rate_hz_);
     private_nh_.param("control_rate_hz", config_.control_rate_hz, config_.control_rate_hz);
     private_nh_.param("nmpc/control_period", config_.control_period, config_.control_period);
@@ -232,7 +230,7 @@ void UnicycleUgvRosNode::loadParams() {
     config_.nmpc_weights.terminal_speed =
         finitePositiveOr(config_.nmpc_weights.terminal_speed, 10.0);
     config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 600.0);
-    status_publish_rate_hz_ = finitePositiveOr(status_publish_rate_hz_, 10.0);
+    status_publish_rate_hz_ = finitePositiveOr(status_publish_rate_hz_, 5.0);
 }
 
 void UnicycleUgvRosNode::seedResetTarget() {
@@ -270,7 +268,7 @@ void UnicycleUgvRosNode::dispatchOutputEvents(const std::vector<::state_machine:
 }
 
 void UnicycleUgvRosNode::publishStatusIfDue(const ros::Time& now) {
-    if (now.isZero() || !control_state_pub_ || !health_state_pub_) {
+    if (now.isZero() || !control_state_pub_) {
         return;
     }
     const double period = 1.0 / status_publish_rate_hz_;
@@ -278,20 +276,19 @@ void UnicycleUgvRosNode::publishStatusIfDue(const ros::Time& now) {
         return;
     }
     last_status_stamp_ = now;
-    std_msgs::UInt32 control_state;
-    control_state.data =
-        static_cast<uint32_t>(controller_.stateMachine().currentState(region_type::CONTROL));
+    std_msgs::String control_state;
+    control_state.data = controller_.stateMachine().currentStateName(region_type::CONTROL);
+    if (control_state.data.empty()) {
+        control_state.data = "Unknown";
+    }
     control_state_pub_.publish(control_state);
-    std_msgs::UInt32 health_state;
-    health_state.data =
-        static_cast<uint32_t>(controller_.stateMachine().currentState(region_type::HEALTH));
-    health_state_pub_.publish(health_state);
 }
 
 void UnicycleUgvRosNode::logStateChanges(::state_machine::StateId control_state,
                                          ::state_machine::StateId health_state) {
     if (control_state != last_logged_control_state_) {
-        ROS_INFO("[UnicycleUgvRosNode] CONTROL state -> %u", static_cast<unsigned>(control_state));
+        ROS_INFO("[UnicycleUgvRosNode] CONTROL state -> %s",
+                 controller_.stateMachine().currentStateName(region_type::CONTROL).c_str());
         last_logged_control_state_ = control_state;
     }
     if (health_state != last_logged_health_state_) {
