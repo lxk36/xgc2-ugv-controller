@@ -1,0 +1,10 @@
+<launch>
+  <!-- Synthetic requests/poses: isolated rostest master only. -->
+  <node pkg="ugv_reset_safety" type="ugv_reset_coordinator_node"
+        name="reset_cohort_coordinator" output="screen" required="true">
+    <rosparam command="load" file="$(find ugv_reset_safety)/config/four_scout.yaml"/>
+    <param name="scene_namespace" value="/cohort_scene"/>
+  </node>
+  <test test-name="reset_cohort" pkg="ugv_reset_safety"
+        type="reset_cohort_rostest.py" time-limit="15.0"/>
+</launch>

@@ -229,7 +229,7 @@ void UnicycleUgvRosNode::loadParams() {
     config_.nmpc_weights.terminal_yaw = finitePositiveOr(config_.nmpc_weights.terminal_yaw, 20.0);
     config_.nmpc_weights.terminal_speed =
         finitePositiveOr(config_.nmpc_weights.terminal_speed, 10.0);
-    config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 600.0);
+    config_.reset_timeout = finitePositiveOr(config_.reset_timeout, 90.0);
     status_publish_rate_hz_ = finitePositiveOr(status_publish_rate_hz_, 5.0);
 }
 

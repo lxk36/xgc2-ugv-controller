@@ -18,7 +18,7 @@ struct ControllerConfig {
     bool auto_start_tracking{false};
     double heading_target_yaw{0.0};
     double track_kp_yaw{1.2};
-    double reset_timeout{600.0};
+    double reset_timeout{90.0};
     double max_linear_speed{1.0};  // FLU |vx|, |vy| after R(ψ)^T
     double max_yaw_rate{1.0};      // FLU |ω|
     double fence_x_min{-20.0};     // offset world ENU x

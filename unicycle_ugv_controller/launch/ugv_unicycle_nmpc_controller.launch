@@ -24,7 +24,7 @@
     <arg name="reset_initial_x" default=""/>
     <arg name="reset_initial_y" default=""/>
     <arg name="reset_initial_yaw" default=""/>
-    <arg name="reset_timeout" default="45.0"/>
+    <arg name="reset_timeout" default="90.0"/>
 
     <arg name="nmpc_control_period" default="0.1"/>
     <arg name="nmpc_prediction_horizon" default="1.0"/>

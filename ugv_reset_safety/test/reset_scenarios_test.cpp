@@ -563,7 +563,7 @@ TEST(ResetScenarios, ScoutProductionCloseGoalsAndTransportPose) {
         robot.limits.accel_omega = 0.6;
         return robot;
     };
-    for (double offset : {0.0, 0.229, 0.25}) {
+    for (double offset : {-0.25, -0.229, 0.0, 0.229, 0.25}) {
         for (double range : {0.051, 0.08, 0.12, 0.30, 2.4}) {
             for (double bearing : {0.0, kPi / 2.0}) {
                 for (double yaw : {0.0, 0.9, kPi / 2.0, kPi}) {
@@ -586,9 +586,23 @@ TEST(ResetScenarios, ScoutProductionCloseGoalsAndTransportPose) {
     EXPECT_TRUE(result.completed) << result.describe();
 }
 
+TEST(ResetScenarios, GazeboPositiveLateralMotionDoesNotOrbitTheResetTarget) {
+    auto robot = makeRobot("ugv1", RobotType::Unicycle, 0.058, -2.535, 0.761);
+    robot.half_length = 0.31;
+    robot.half_width = 0.26;
+    robot.limits = {0.35, 0.0, 0.5, 0.35, 0.35, 0.6};
+    const ResetTarget target{{0.08037089645766905, -2.8945167390828646}, 0.30643537735432513};
+    // Live pose differences: vy/omega = +0.22 m. The old nonnegative
+    // offset estimator discarded this sign and held a ~0.35 m orbit.
+    const auto result = runScenario({robot}, {target}, {}, {-0.22, 0.12, 0.16}, 45.0, true);
+    EXPECT_TRUE(result.completed) << result.describe();
+    EXPECT_FALSE(result.collision);
+    EXPECT_LE(result.max_position_error, 0.05);
+}
+
 TEST(ResetScenarios, FourScoutsCrossAndReturnWithProductionProfile) {
     const std::vector<Eigen::Vector2d> corners{{-2.5, -2.0}, {2.5, -2.0}, {2.5, 2.0}, {-2.5, 2.0}};
-    for (const Plant plant : {Plant{}, Plant{0.229, 0.12, 0.16}}) {
+    for (const Plant plant : {Plant{}, Plant{-0.229, 0.12, 0.16}, Plant{0.229, 0.12, 0.16}}) {
         // Opposite-corner exchange; all four start together under the DWA.
         for (int leg = 0; leg < 2; ++leg) {
             std::vector<Robot> robots;

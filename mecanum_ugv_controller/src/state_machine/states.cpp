@@ -188,7 +188,8 @@ void ResetState::emitZero(::state_machine::StateContext& ctx, bool force) {
     controller_.clearCommand();
     const double period =
         cfg.idle_cmd_rate_hz > 0.0 ? 1.0 / cfg.idle_cmd_rate_hz : 1.0 / cfg.command_publish_rate_hz;
-    if (!force && !command_gate_.due(ugv_reset_safety::monotonicSeconds(), period)) {
+    const bool due = command_gate_.due(ugv_reset_safety::monotonicSeconds(), period);
+    if (!force && !due) {
         return;
     }
     ctx.emitOutput(

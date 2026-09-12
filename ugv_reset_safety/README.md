@@ -49,9 +49,15 @@ stopping objective. Heading alignment loses weight near the actual target so
 Scout is not required to keep turning after its position can converge.
 
 Scout trajectory scoring uses successive existing poses to estimate the bounded
-negative lateral/yaw coupling, without a new twist subscription or lateral
+signed lateral/yaw coupling, without a new twist subscription or lateral
 actuator. Ill-conditioned small turns are excluded. This calibrates the scoring
-prediction; collision checks retain the configured coupling endpoints.
+prediction; collision checks include zero and both signed coupling endpoints
+for each Scout. Candidates are ranked by trajectory score before the full
+collision rollout; the selected trajectory retains every safety check.
+
+Native Reset has a fixed 90 s timeout, including the production Scout launch.
+The per-cycle solve deadline is separate. The 45 s mathematical regression
+scenarios remain a stricter convergence check, not the runtime timeout.
 
 `planPeerPaths` recomputes complete routes around current moving-peer footprints
 to the unchanged original targets. Transient target occupancy and close poses

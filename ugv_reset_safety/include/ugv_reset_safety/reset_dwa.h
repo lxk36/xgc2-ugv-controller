@@ -51,7 +51,8 @@ class ResetDwa {
                 const double lateral =
                     (robot.position - observation.position)
                         .dot(Eigen::Vector2d(-std::sin(midpoint), std::cos(midpoint)));
-                const double sample = std::clamp(-lateral / (2.0 * std::sin(0.5 * turn)), 0.0,
+                const double sample = std::clamp(-lateral / (2.0 * std::sin(0.5 * turn)),
+                                                 -robot.lateral_velocity_per_yaw_bound,
                                                  robot.lateral_velocity_per_yaw_bound);
                 observation.lateral_offset +=
                     (1.0 - std::exp(-dt / 0.1)) * (sample - observation.lateral_offset);
@@ -247,7 +248,7 @@ class ResetDwa {
                               const std::vector<bool>& committed,
                               const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
                               const DwaConfig& config, double time, double* min_clearance,
-                              bool coupled_peers) {
+                              double peer_lateral_scale) {
         const auto self_disks = coveringDisks(self, config.disk_count);
         const double self_reserve = config.clearance;
         for (const auto& disk : self_disks) {
@@ -282,8 +283,8 @@ class ResetDwa {
                     committed[peer_index] ? peer_commands[peer_index] : initial_peer.previous;
             }
             Robot peer = predictConstant(initial_peer, peer_command, time);
-            if (coupled_peers && peer.type == RobotType::Unicycle) {
-                peer.position += initial_peer.lateral_velocity_per_yaw_bound *
+            if (peer_lateral_scale != 0.0 && peer.type == RobotType::Unicycle) {
+                peer.position += peer_lateral_scale * initial_peer.lateral_velocity_per_yaw_bound *
                                  Eigen::Vector2d(std::cos(initial_peer.yaw) - std::cos(peer.yaw),
                                                  std::sin(initial_peer.yaw) - std::sin(peer.yaw));
             }
@@ -308,21 +309,21 @@ class ResetDwa {
                          const std::vector<bool>& committed,
                          const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
                          const DwaConfig& config, double time, double* clearance) {
-        for (bool coupled_self : {false, true}) {
-            if (coupled_self &&
+        for (double self_lateral_scale : {0.0, -1.0, 1.0}) {
+            if (self_lateral_scale != 0.0 &&
                 (self.type != RobotType::Unicycle || self.lateral_velocity_per_yaw_bound == 0.0)) {
                 continue;
             }
             Robot predicted = self;
-            if (coupled_self) {
+            if (self_lateral_scale != 0.0) {
                 predicted.position +=
-                    self.lateral_velocity_per_yaw_bound *
+                    self_lateral_scale * self.lateral_velocity_per_yaw_bound *
                     Eigen::Vector2d(std::cos(robots[index].yaw) - std::cos(self.yaw),
                                     std::sin(robots[index].yaw) - std::sin(self.yaw));
             }
-            for (bool coupled_peers : {false, true}) {
+            for (double peer_lateral_scale : {0.0, -1.0, 1.0}) {
                 if (!poseSafeModel(index, predicted, command, robots, peer_commands, committed,
-                                   obstacles, fence, config, time, clearance, coupled_peers)) {
+                                   obstacles, fence, config, time, clearance, peer_lateral_scale)) {
                     return false;
                 }
             }
@@ -560,34 +561,59 @@ class ResetDwa {
             double best_score = std::numeric_limits<double>::infinity();
             double best_clearance = -std::numeric_limits<double>::infinity();
             Eigen::Vector3d best = brakingCommand(robot, dt);
+            struct Candidate {
+                Eigen::Vector3d command;
+                double score;
+            };
+            std::vector<Candidate> candidates;
+            candidates.reserve(xs.size() * ys.size() * ws.size());
             for (const double vx : xs) {
                 for (const double vy : ys) {
                     for (const double omega : ws) {
                         const Eigen::Vector3d candidate(vx, vy, omega);
-                        const auto checked = rollout(index, candidate, robots, committed_commands,
-                                                     committed, obstacles, fence, config);
-                        if (!checked.safe) {
-                            continue;
+                        // Scoring does not depend on collision clearance. Rank
+                        // cheap endpoints first; only admissibility needs the
+                        // full footprint rollout and braking tail.
+                        Robot endpoint = robot;
+                        double time = 0.0;
+                        while (time + 1.0e-9 < kRolloutHorizon) {
+                            const double step = std::min(kRolloutStep, kRolloutHorizon - time);
+                            integrate(&endpoint, candidate, step);
+                            time += step;
                         }
-                        Robot predicted = checked.endpoint;
+                        Robot predicted = endpoint;
                         if (robot.type == RobotType::Unicycle) {
                             predicted.position +=
                                 observations_.at(robot.id).lateral_offset *
                                 Eigen::Vector2d(std::cos(robot.yaw) - std::cos(predicted.yaw),
                                                 std::sin(robot.yaw) - std::sin(predicted.yaw));
                         }
-                        double score =
-                            trajectoryScore(robot, predicted, candidate, paths[index], encounter);
-                        score += encounterScore(index, checked.endpoint, candidate, robots, paths);
-                        if (!found || score < best_score - 1.0e-12 ||
-                            (std::abs(score - best_score) <= 1.0e-12 &&
-                             checked.min_clearance > best_clearance)) {
-                            found = true;
-                            best_score = score;
-                            best_clearance = checked.min_clearance;
-                            best = candidate;
-                        }
+                        const double score =
+                            trajectoryScore(robot, predicted, candidate, paths[index], encounter) +
+                            encounterScore(index, endpoint, candidate, robots, paths);
+                        candidates.push_back({candidate, score});
                     }
+                }
+            }
+            std::stable_sort(
+                candidates.begin(), candidates.end(),
+                [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
+            for (const auto& candidate : candidates) {
+                if (found && candidate.score > best_score + 1.0e-12) {
+                    break;
+                }
+                const auto checked = rollout(index, candidate.command, robots, committed_commands,
+                                             committed, obstacles, fence, config);
+                if (!checked.safe) {
+                    continue;
+                }
+                if (!found || candidate.score < best_score - 1.0e-12 ||
+                    (std::abs(candidate.score - best_score) <= 1.0e-12 &&
+                     checked.min_clearance > best_clearance)) {
+                    found = true;
+                    best_score = candidate.score;
+                    best_clearance = checked.min_clearance;
+                    best = candidate.command;
                 }
             }
             if (found) {

@@ -60,7 +60,7 @@ struct ControllerConfig {
     bool auto_start_tracking{false};
     StateSource state_source{StateSource::STATE_ESTIMATOR};
     TrackingStrategy tracking_strategy{TrackingStrategy::NMPC};
-    double reset_timeout{600.0};
+    double reset_timeout{90.0};
     double chassis_max_linear_speed{1.05};
     double chassis_max_yaw_rate{1.05};
     double max_linear_speed{3.0};

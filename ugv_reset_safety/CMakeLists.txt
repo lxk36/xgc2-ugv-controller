@@ -30,6 +30,7 @@ if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/reset_coordinator.test)
   add_rostest(test/reset_coordinator_scout.test)
+  add_rostest(test/reset_cohort.test)
   add_test(NAME slot_initial_pose_launch_args_test
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test/slot_initial_pose_launch_args_test.py)
   set_tests_properties(slot_initial_pose_launch_args_test PROPERTIES

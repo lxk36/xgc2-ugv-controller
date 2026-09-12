@@ -214,15 +214,9 @@ class Coordinator {
             scheduled_requested_.clear();
             selected_.clear();
             completed_.assign(entries_.size(), false);
-            bool others_collecting = false;
-            for (const auto& peer : entries_) {
-                if (peer.get() != &e && peer->have_request) {
-                    others_collecting = true;
-                }
-            }
-            if (!others_collecting) {
-                last_admission_ = ros::WallTime::now();
-            }
+            // Every new owner generation reopens admission. Stored requests
+            // from a previous Reset must not suppress the next batch window.
+            last_admission_ = ros::WallTime::now();
             const auto wall = ros::WallTime::now();
             if (!e.have_pose || (wall - e.pose_wall).toSec() > timeout_ ||
                 (now - e.pose_stamp).toSec() < 0 || (now - e.pose_stamp).toSec() > timeout_ ||
@@ -437,6 +431,24 @@ class Coordinator {
             rejectActive("scene unavailable: " + scene_error_);
             return;
         }
+        // Requests and the 5 Hz public state do not arrive atomically.
+        // Hold zero until new generations have finished joining, before
+        // consulting any previous generation's rejection or freezing members.
+        const bool awaiting_state =
+            std::any_of(entries_.begin(), entries_.end(), [&](const auto& e) {
+                return e->have_request && (wall - e->request_wall).toSec() <= timeout_ &&
+                       e->state != "Reset";
+            });
+        if ((wall - last_admission_).toSec() < timeout_ ||
+            (awaiting_state && (wall - last_admission_).toSec() < state_timeout_)) {
+            for (auto& e : entries_) {
+                if (e->robot.active) {
+                    reply(*e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
+                          "collecting reset batch");
+                }
+            }
+            return;
+        }
         for (auto& e : entries_) {
             if (e->robot.active && e->rejected) {
                 rejectActive(e->reason);
@@ -453,22 +465,6 @@ class Coordinator {
         }
         if (dt <= 0 || dt > timeout_ || wall_dt <= 0 || wall_dt > timeout_) {
             rejectActive("coordinator deadline missed");
-            return;
-        }
-        bool cohort_incomplete = false;
-        for (const auto& e : entries_) {
-            if (e->state != "Reset") {
-                cohort_incomplete = true;
-                break;
-            }
-        }
-        if ((wall - last_admission_).toSec() < timeout_ && cohort_incomplete) {
-            for (auto& e : entries_) {
-                if (e->robot.active) {
-                    reply(*e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
-                          "collecting reset batch");
-                }
-            }
             return;
         }
         for (auto& e : entries_) {
@@ -590,7 +586,10 @@ class Coordinator {
         }
         dwa_config_.dt = dt;
         dwa_.apply(robots, paths, path_obstacles, fence_, dwa_config_);
-        if ((ros::WallTime::now() - wall).toSec() > 1.0 / frequency_) {
+        const double solve_seconds = (ros::WallTime::now() - wall).toSec();
+        if (solve_seconds > 1.0 / frequency_) {
+            ROS_WARN("Reset solve deadline missed: %.3f ms > %.3f ms", solve_seconds * 1000.0,
+                     1000.0 / frequency_);
             rejectActive("reset solve deadline missed");
             return;
         }
