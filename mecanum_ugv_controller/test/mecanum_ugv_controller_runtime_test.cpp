@@ -345,8 +345,11 @@ TEST(MecanumSm, ResetWithoutTargetStaysResetAndLogs) {
     postCommand(controller, event_type::RESET_REQUESTED, 1.01);
     setPose(state, 1.01, 0.0, 0.0, 0.0);
     controller.update(1.01);
+    EXPECT_TRUE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
     controller.update(1.012);
+    EXPECT_FALSE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
     controller.update(1.02);
+    EXPECT_FALSE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
     EXPECT_FALSE(controller.resetSession().active());
     EXPECT_NE(controller.lastResetHoldReason().find("no target"), std::string::npos);

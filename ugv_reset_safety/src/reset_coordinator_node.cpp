@@ -3,9 +3,9 @@
 #include <std_msgs/String.h>
 #include <ugv_reset_safety/ResetRequest.h>
 #include <ugv_reset_safety/ResetResponse.h>
-#include <ugv_reset_safety/fleet_guidance.h>
 #include <ugv_reset_safety/fleet_schedule.h>
-#include <ugv_reset_safety/reset_guidance.h>
+#include <ugv_reset_safety/reset_dwa.h>
+#include <ugv_reset_safety/reset_path.h>
 #include <ugv_reset_safety/scene_projection.h>
 #include <xgc2_geometry_msgs/SceneConsumerStatus.h>
 #include <xgc2_geometry_msgs/SceneState.h>
@@ -61,7 +61,7 @@ bool finitePose(const geometry_msgs::Pose2D& p) {
 class Coordinator {
     struct Entry {
         Robot robot;
-        ResetGuidance guidance;
+        ResetPath path;
         ros::Subscriber request_sub, pose_sub, state_sub;
         ros::Publisher response_pub;
         ResetRequest request;
@@ -84,10 +84,8 @@ class Coordinator {
         private_.param("state_timeout", state_timeout_, 1.0);
         private_.param("world_frame", world_frame_, std::string("world"));
         private_.param("scene_namespace", scene_namespace_, std::string("/xgc/scene"));
-        private_.param("clearance", filter_.clearance, 0.08);
-        private_.param("uncertainty_margin", filter_.uncertainty_margin, 0.03);
-        private_.param("barrier_gain", filter_.barrier_gain, 1.0);
-        private_.param("velocity_uncertainty", filter_.velocity_uncertainty, 0.0);
+        private_.param("clearance", dwa_config_.clearance, 0.08);
+        private_.param("uncertainty_margin", dwa_config_.uncertainty_margin, 0.03);
         fence_.enabled = true;
         if (!private_.getParam("fence/x_min", fence_.xmin) ||
             !private_.getParam("fence/x_max", fence_.xmax) ||
@@ -209,8 +207,8 @@ class Coordinator {
             e.rejected = false;
             e.reason.clear();
             e.frozen_target = r.target;
-            e.guidance.clear();
-            passing_.clear();
+            e.path.clear();
+            dwa_.clear();
             schedule_ready_ = false;
             schedule_.clear();
             scheduled_requested_.clear();
@@ -511,7 +509,7 @@ class Coordinator {
             requested.push_back(e->robot.active);
         }
         if (!schedule_ready_) {
-            schedule_ = FleetSchedule(filter_.clearance + filter_.uncertainty_margin);
+            schedule_ = FleetSchedule(dwa_config_.clearance + dwa_config_.uncertainty_margin);
             const auto initialized = schedule_.initialize(robots, targets);
             if (!initialized.ok()) {
                 rejectActive("reset schedule: " + initialized.detail);
@@ -545,55 +543,53 @@ class Coordinator {
         }
         if (selected != selected_) {
             selected_ = selected;
-            passing_.clear();
+            dwa_.clear();
             for (auto& e : entries_) {
                 e->planned = false;
             }
         }
-        auto guidance_obstacles = occupancy_.empty() ? obstacles_ : occupancy_;
+        auto path_obstacles = occupancy_.empty() ? obstacles_ : occupancy_;
         const auto parked = parkedPeerObstacles(robots, selected);
-        guidance_obstacles.insert(guidance_obstacles.end(), parked.begin(), parked.end());
-        std::vector<GuidanceStatus> statuses(robots.size(), GuidanceStatus::Uninitialized);
+        path_obstacles.insert(path_obstacles.end(), parked.begin(), parked.end());
+        std::vector<ResetPath> paths(robots.size());
         for (std::size_t i = 0; i < robots.size(); ++i) {
             auto& e = *entries_[i];
             // Nonselected owners remain in Reset but receive an exact zero.
             // They are stationary obstacles, not free actuators.
             if (!selected[i] &&
                 (e.measured_speed > 0.03 || std::abs(e.measured_omega) > 0.05 ||
-                 robots[i].previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance)) {
+                 robots[i].previous.cwiseAbs().maxCoeff() > dwa_config_.feasibility_tolerance)) {
                 rejectActive("parked Reset member is moving");
                 return;
             }
             robots[i].active = selected[i];
             robots[i].stop_requested = false;
-            robots[i].nominal.setZero();
+            robots[i].command.setZero();
             if (!selected[i]) {
                 continue;
             }
             if (!e.planned) {
-                const auto planned =
-                    e.guidance.setGoal(robots[i], targets[i], guidance_obstacles, fence_);
-                if (planned.status == GuidanceStatus::InvalidInput ||
-                    planned.status == GuidanceStatus::NoRoute) {
+                const auto planned = e.path.setGoal(robots[i], targets[i], path_obstacles, fence_);
+                if (planned.status == PathStatus::InvalidInput ||
+                    planned.status == PathStatus::NoRoute) {
                     rejectActive(planned.message);
                     return;
                 }
                 e.planned = true;
             }
-            const auto g = e.guidance.step(robots[i]);
-            if (g.status == GuidanceStatus::InvalidInput || g.status == GuidanceStatus::NoRoute) {
+            const auto g = e.path.step(robots[i]);
+            if (g.status == PathStatus::InvalidInput || g.status == PathStatus::NoRoute) {
                 rejectActive(g.message);
                 return;
             }
-            robots[i].nominal = g.nominal;
-            statuses[i] = g.status;
+            paths[i] = e.path;
             robots[i].stop_requested =
-                g.status == GuidanceStatus::Reached &&
-                robots[i].previous.cwiseAbs().maxCoeff() <= filter_.feasibility_tolerance &&
+                g.status == PathStatus::Reached &&
+                robots[i].previous.cwiseAbs().maxCoeff() <= dwa_config_.feasibility_tolerance &&
                 e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
         }
-        filter_.dt = dt;
-        passing_.apply(robots, guidance_obstacles, fence_, filter_);
+        dwa_config_.dt = dt;
+        dwa_.apply(robots, paths, path_obstacles, fence_, dwa_config_);
         if ((ros::WallTime::now() - wall).toSec() > 1.0 / frequency_) {
             rejectActive("reset solve deadline missed");
             return;
@@ -604,8 +600,8 @@ class Coordinator {
                 continue;
             }
             const bool arrived =
-                robots[i].stop_requested && robots[i].nominal.isZero(0.0) &&
-                e.robot.previous.cwiseAbs().maxCoeff() <= filter_.feasibility_tolerance &&
+                robots[i].stop_requested && robots[i].command.isZero(0.0) &&
+                e.robot.previous.cwiseAbs().maxCoeff() <= dwa_config_.feasibility_tolerance &&
                 e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
             if (arrived || completed_[i]) {
                 completed_[i] = true;
@@ -613,7 +609,7 @@ class Coordinator {
             } else if (!robots[i].local_plan_feasible) {
                 reply(e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(), "no feasible DWA sample");
             } else {
-                reply(e, ResetResponse::RUNNING, robots[i].nominal, "");
+                reply(e, ResetResponse::RUNNING, robots[i].command, "");
             }
         }
     }
@@ -631,8 +627,8 @@ class Coordinator {
     std::vector<ConvexObstacle> obstacles_;
     std::vector<ConvexObstacle> occupancy_;
     Fence fence_;
-    FilterConfig filter_;
-    FleetGuidance passing_;
+    DwaConfig dwa_config_;
+    ResetDwa dwa_;
     FleetSchedule schedule_;
     bool schedule_ready_ = false;
     std::vector<bool> scheduled_requested_, selected_, completed_;

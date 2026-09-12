@@ -1,39 +1,66 @@
 #pragma once
-#include <ugv_reset_safety/reset_guidance.h>
+#include <ugv_reset_safety/reset_path.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <map>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace ugv_reset_safety {
 
-// FleetGuidance is the online local-planning layer after geometric route
+// ResetDwa is the online local-planning layer after geometric route
 // guidance. The geometric planner decides where a robot should go; this class
 // decides which immediately reachable body twist to execute over the next
 // short horizon. Every proposal is rolled out with the chassis kinematics,
 // covering-disk footprint, scene occupancy, peer motion, fence limits, and an
 // explicit braking tail. DWA is the Reset safety authority: no feasible sample
 // is fail-closed (zero + infeasible), not an unrolled brake treated as safe.
-class FleetGuidance {
-    struct Passage {
-        ResetGuidance guidance;
-        std::string partner;
-        bool complete = false;
-    };
-
+class ResetDwa {
     struct RolloutResult {
         bool safe = false;
         double min_clearance = std::numeric_limits<double>::infinity();
+        Robot endpoint;
     };
 
-    std::map<std::string, Passage> passages_;
-    std::set<std::pair<std::string, std::string>> encounters_;
+    struct MotionObservation {
+        Eigen::Vector2d position;
+        double yaw;
+        double lateral_offset = 0.0;
+    };
+    std::map<std::string, MotionObservation> observations_;
+
+    void observeMotion(const std::vector<Robot>& robots, double dt) {
+        for (const auto& robot : robots) {
+            auto found = observations_.find(robot.id);
+            if (found == observations_.end()) {
+                observations_.emplace(robot.id, MotionObservation{robot.position, robot.yaw});
+                continue;
+            }
+            auto& observation = found->second;
+            const double turn = std::atan2(std::sin(robot.yaw - observation.yaw),
+                                           std::cos(robot.yaw - observation.yaw));
+            if (robot.type == RobotType::Unicycle && std::abs(turn) > 1.0e-4) {
+                // Integrated lateral displacement / heading change estimates the
+                // kinematic body-origin offset. No twist topic or lateral
+                // actuator is introduced. Small turns are excluded as ill-conditioned.
+                const double midpoint = observation.yaw + 0.5 * turn;
+                const double lateral =
+                    (robot.position - observation.position)
+                        .dot(Eigen::Vector2d(-std::sin(midpoint), std::cos(midpoint)));
+                const double sample = std::clamp(-lateral / (2.0 * std::sin(0.5 * turn)), 0.0,
+                                                 robot.lateral_velocity_per_yaw_bound);
+                observation.lateral_offset +=
+                    (1.0 - std::exp(-dt / 0.1)) * (sample - observation.lateral_offset);
+            }
+            observation.position = robot.position;
+            observation.yaw = robot.yaw;
+        }
+    }
+
     std::size_t priority_cursor_ = 0;
 
     static constexpr double kRolloutHorizon = 1.0;
@@ -54,16 +81,17 @@ class FleetGuidance {
         return 0.0;
     }
 
-    static std::vector<double> axisSamples(double previous, double desired, double limit,
-                                           double acceleration, double dt) {
+    static std::vector<double> axisSamples(double previous, double limit, double acceleration,
+                                           double dt) {
         if (limit <= 0.0) {
             return {0.0};
         }
         const double reach = std::max(0.0, acceleration) * std::max(0.0, dt);
         const double low = std::max(-limit, previous - reach);
         const double high = std::min(limit, previous + reach);
-        std::vector<double> values{clamp(desired, low, high), previous, low, high,
-                                   0.5 * (low + high)};
+        std::vector<double> values{
+            low,  low + 0.25 * (high - low), 0.5 * (low + high), low + 0.75 * (high - low),
+            high, clamp(previous, low, high)};
         if (low <= 0.0 && high >= 0.0) {
             values.push_back(0.0);
         }
@@ -153,14 +181,6 @@ class FleetGuidance {
         return distance;
     }
 
-    static double diskReserve(const Robot&, const Eigen::Vector3d&, double,
-                              const FilterConfig& config) {
-        // Scene occupancy already carries the configured future-motion envelope.
-        // Accumulating velocity disturbance again as unbounded position error
-        // makes the local rollout stop near valid goals and can deadlock a fleet.
-        return config.clearance;
-    }
-
     static std::vector<Eigen::Vector2d> bodyRectangle(const Robot& robot) {
         std::vector<Eigen::Vector2d> result;
         result.reserve(4);
@@ -220,14 +240,16 @@ class FleetGuidance {
         return gap;
     }
 
-    static bool poseSafe(std::size_t index, const Robot& self, const Eigen::Vector3d& self_command,
-                         const std::vector<Robot>& initial_robots,
-                         const std::vector<Eigen::Vector3d>& peer_commands,
-                         const std::vector<bool>& committed,
-                         const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
-                         const FilterConfig& config, double time, double* min_clearance) {
+    static bool poseSafeModel(std::size_t index, const Robot& self,
+                              const Eigen::Vector3d& self_command,
+                              const std::vector<Robot>& initial_robots,
+                              const std::vector<Eigen::Vector3d>& peer_commands,
+                              const std::vector<bool>& committed,
+                              const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
+                              const DwaConfig& config, double time, double* min_clearance,
+                              bool coupled_peers) {
         const auto self_disks = coveringDisks(self, config.disk_count);
-        const double self_reserve = diskReserve(self, self_command, time, config);
+        const double self_reserve = config.clearance;
         for (const auto& disk : self_disks) {
             if (fence.enabled) {
                 const double margin = disk.radius + self_reserve;
@@ -260,6 +282,11 @@ class FleetGuidance {
                     committed[peer_index] ? peer_commands[peer_index] : initial_peer.previous;
             }
             Robot peer = predictConstant(initial_peer, peer_command, time);
+            if (coupled_peers && peer.type == RobotType::Unicycle) {
+                peer.position += initial_peer.lateral_velocity_per_yaw_bound *
+                                 Eigen::Vector2d(std::cos(initial_peer.yaw) - std::cos(peer.yaw),
+                                                 std::sin(initial_peer.yaw) - std::sin(peer.yaw));
+            }
             const double gap = convexClearance(self_body, bodyRectangle(peer));
             *min_clearance = std::min(*min_clearance, gap);
             // t=0 / stay-put: only reject actual rectangle penetration so a
@@ -275,12 +302,40 @@ class FleetGuidance {
         return true;
     }
 
+    static bool poseSafe(std::size_t index, const Robot& self, const Eigen::Vector3d& command,
+                         const std::vector<Robot>& robots,
+                         const std::vector<Eigen::Vector3d>& peer_commands,
+                         const std::vector<bool>& committed,
+                         const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
+                         const DwaConfig& config, double time, double* clearance) {
+        for (bool coupled_self : {false, true}) {
+            if (coupled_self &&
+                (self.type != RobotType::Unicycle || self.lateral_velocity_per_yaw_bound == 0.0)) {
+                continue;
+            }
+            Robot predicted = self;
+            if (coupled_self) {
+                predicted.position +=
+                    self.lateral_velocity_per_yaw_bound *
+                    Eigen::Vector2d(std::cos(robots[index].yaw) - std::cos(self.yaw),
+                                    std::sin(robots[index].yaw) - std::sin(self.yaw));
+            }
+            for (bool coupled_peers : {false, true}) {
+                if (!poseSafeModel(index, predicted, command, robots, peer_commands, committed,
+                                   obstacles, fence, config, time, clearance, coupled_peers)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     static RolloutResult rollout(std::size_t index, const Eigen::Vector3d& command,
                                  const std::vector<Robot>& robots,
                                  const std::vector<Eigen::Vector3d>& peer_commands,
                                  const std::vector<bool>& committed,
                                  const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
-                                 const FilterConfig& config, double horizon = kRolloutHorizon) {
+                                 const DwaConfig& config, double horizon = kRolloutHorizon) {
         RolloutResult result;
         Robot state = robots[index];
         double time = 0.0;
@@ -298,6 +353,8 @@ class FleetGuidance {
                 return result;
             }
         }
+
+        result.endpoint = state;
 
         // Dynamic-window admissibility includes a braking tail. This is still a
         // kinematic/acceleration-envelope check rather than a hardware brake
@@ -325,19 +382,115 @@ class FleetGuidance {
         return result;
     }
 
-    static double commandScore(const Robot& robot, const Eigen::Vector3d& command,
-                               const Eigen::Vector3d& desired) {
-        const double sx = std::max(robot.limits.max_vx, 1.0e-6);
-        const double sy = std::max(robot.limits.max_vy, 1.0e-6);
-        const double sw = std::max(robot.limits.max_omega, 1.0e-6);
-        double score = std::pow((command.x() - desired.x()) / sx, 2) +
-                       std::pow((command.z() - desired.z()) / sw, 2);
-        if (robot.type == RobotType::Mecanum) {
-            score += std::pow((command.y() - desired.y()) / sy, 2);
+    static double trajectoryScore(const Robot& robot, const Robot& endpoint,
+                                  const Eigen::Vector3d& command, const ResetPath& path,
+                                  bool encounter) {
+        if (path.reached(robot)) {
+            return command.squaredNorm();
         }
-        // Clearance is a hard admissibility condition and a tie-break below.
-        // It must not buy enough negative cost to override a feasible nominal
-        // tracking command, which previously caused asymptotic near-zero motion.
+        double score =
+            2.0 * (endpoint.position - path.pointAhead(robot.position, path.lookahead())).norm() +
+            0.2 * command.squaredNorm();
+        if (robot.type == RobotType::Mecanum) {
+            const double yaw_error = std::atan2(std::sin(path.target().yaw - endpoint.yaw),
+                                                std::cos(path.target().yaw - endpoint.yaw));
+            score += 0.25 * yaw_error * yaw_error;
+        } else if (!path.reached(endpoint)) {
+            const Eigen::Vector2d ahead = path.pointAhead(robot.position, path.lookahead()) -
+                                          (encounter ? robot.position : endpoint.position);
+            if (ahead.norm() > 1.0e-9) {
+                const double bearing = std::atan2(ahead.y(), ahead.x());
+                const double forward =
+                    std::atan2(std::sin(bearing - endpoint.yaw), std::cos(bearing - endpoint.yaw));
+                const double reverse =
+                    std::atan2(std::sin(bearing - endpoint.yaw - 3.14159265358979323846),
+                               std::cos(bearing - endpoint.yaw - 3.14159265358979323846));
+                const double error =
+                    command.x() > 1.0e-9
+                        ? forward
+                        : command.x() < -1.0e-9
+                              ? reverse
+                              : std::abs(forward) < std::abs(reverse) ? forward : reverse;
+                score += 0.5 *
+                         std::min(1.0, (robot.position - path.target().position).squaredNorm() /
+                                           (path.lookahead() * path.lookahead())) *
+                         error * error;
+            }
+        }
+        // At the original target, prefer a stopped prediction over coasting.
+        if (path.reached(endpoint)) {
+            score += command.squaredNorm();
+        }
+        return score;
+    }
+
+    static double encounterScore(std::size_t index, const Robot& endpoint,
+                                 const Eigen::Vector3d& command, const std::vector<Robot>& robots,
+                                 const std::vector<ResetPath>& paths) {
+        const auto& self = robots[index];
+        const Eigen::Vector2d self_heading(std::cos(endpoint.yaw), std::sin(endpoint.yaw));
+        const double self_direction =
+            std::abs(command.x()) > 1.0e-9
+                ? (command.x() > 0 ? 1.0 : -1.0)
+                : (self_heading.dot(
+                       paths[index].pointAhead(self.position, paths[index].lookahead()) -
+                       self.position) >= 0
+                       ? 1.0
+                       : -1.0);
+        const Eigen::Vector2d velocity =
+            self.type == RobotType::Unicycle
+                ? Eigen::Vector2d(self_direction * self.limits.max_vx * self_heading)
+                : self.limits.max_vx * paths[index].project(endpoint.position).tangent;
+        double score = 0.0;
+        for (std::size_t j = 0; j < robots.size(); ++j) {
+            if (j == index || !robots[j].active || robots[j].stop_requested) {
+                continue;
+            }
+            const auto& peer = robots[j];
+            const Eigen::Vector2d peer_heading(std::cos(peer.yaw), std::sin(peer.yaw));
+            const double peer_direction =
+                std::abs(peer.previous.x()) > 1.0e-9
+                    ? (peer.previous.x() > 0 ? 1.0 : -1.0)
+                    : (peer_heading.dot(paths[j].pointAhead(peer.position, paths[j].lookahead()) -
+                                        peer.position) >= 0
+                           ? 1.0
+                           : -1.0);
+            const Eigen::Vector2d peer_velocity =
+                peer.type == RobotType::Unicycle
+                    ? Eigen::Vector2d(peer_direction * peer.limits.max_vx * peer_heading)
+                    : peer.limits.max_vx * paths[j].project(peer.position).tangent;
+            const Eigen::Vector2d delta = peer.position - self.position;
+            const Eigen::Vector2d relative = velocity - peer_velocity;
+            const double closing = delta.dot(relative);
+            if (closing <= 0.0 || relative.squaredNorm() < 1.0e-9) {
+                continue;
+            }
+            const double time = closing / relative.squaredNorm();
+            const double turn_room = self.limits.max_vx / self.limits.max_omega +
+                                     peer.limits.max_vx / peer.limits.max_omega;
+            const double radius = std::hypot(self.half_length, self.half_width) +
+                                  std::hypot(peer.half_length, peer.half_width) + 0.1 +
+                                  2.0 * self.lateral_velocity_per_yaw_bound *
+                                      std::sin(0.5 * self.limits.max_omega * kRolloutHorizon) +
+                                  2.0 * peer.lateral_velocity_per_yaw_bound *
+                                      std::sin(0.5 * peer.limits.max_omega * kRolloutHorizon);
+            if (delta.norm() > radius + 2.0 * turn_room) {
+                continue;
+            }
+            const double miss = (delta - time * relative).norm();
+            if (miss > radius) {
+                continue;
+            }
+            const double bearing = std::atan2(delta.y(), delta.x());
+            const double travel = std::atan2(relative.y(), relative.x());
+            const double error = std::atan2(std::sin(travel - bearing), std::cos(travel - bearing));
+            const double cone = std::asin(std::min(1.0, radius / std::max(delta.norm(), radius)));
+            // A common starboard preference breaks a symmetric head-on tie.
+            // This scores this candidate's heading; it creates no alternate goal.
+            if (std::abs(error) < cone) {
+                score += 8.0 * (cone + error) * (cone + error);
+            }
+        }
         return score;
     }
 
@@ -351,11 +504,12 @@ class FleetGuidance {
         return result;
     }
 
-    void applyDynamicWindow(std::vector<Robot>& robots,
+    void applyDynamicWindow(std::vector<Robot>& robots, const std::vector<ResetPath>& paths,
                             const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
-                            const FilterConfig& config) {
+                            const DwaConfig& config) {
         for (auto& robot : robots) {
             if (!robot.active || robot.stop_requested) {
+                robot.command.setZero();
                 robot.local_plan_feasible = true;
             }
         }
@@ -379,14 +533,27 @@ class FleetGuidance {
         const double dt = std::max(1.0e-3, std::min(0.1, config.dt));
         for (const auto index : order) {
             auto& robot = robots[index];
-            const Eigen::Vector3d desired = robot.nominal;
-            const auto xs = axisSamples(robot.previous.x(), desired.x(), robot.limits.max_vx,
-                                        robot.limits.accel_vx, dt);
+            bool encounter = false;
+            for (std::size_t j = 0; j < robots.size(); ++j) {
+                if (j == index || !robots[j].active || robots[j].stop_requested) {
+                    continue;
+                }
+                const auto& peer = robots[j];
+                const double range = 2.0 * (robot.limits.max_vx / robot.limits.max_omega +
+                                            peer.limits.max_vx / peer.limits.max_omega) +
+                                     std::hypot(robot.half_length, robot.half_width) +
+                                     std::hypot(peer.half_length, peer.half_width);
+                encounter = encounter || (peer.position - robot.position).norm() < range;
+            }
+            encounter = encounter && (robot.position - paths[index].target().position).norm() >
+                                         2.0 * paths[index].lookahead();
+            const auto xs =
+                axisSamples(robot.previous.x(), robot.limits.max_vx, robot.limits.accel_vx, dt);
             const auto ys = robot.type == RobotType::Unicycle
                                 ? std::vector<double>{0.0}
-                                : axisSamples(robot.previous.y(), desired.y(), robot.limits.max_vy,
+                                : axisSamples(robot.previous.y(), robot.limits.max_vy,
                                               robot.limits.accel_vy, dt);
-            const auto ws = axisSamples(robot.previous.z(), desired.z(), robot.limits.max_omega,
+            const auto ws = axisSamples(robot.previous.z(), robot.limits.max_omega,
                                         robot.limits.accel_omega, dt);
 
             bool found = false;
@@ -402,7 +569,16 @@ class FleetGuidance {
                         if (!checked.safe) {
                             continue;
                         }
-                        const double score = commandScore(robot, candidate, desired);
+                        Robot predicted = checked.endpoint;
+                        if (robot.type == RobotType::Unicycle) {
+                            predicted.position +=
+                                observations_.at(robot.id).lateral_offset *
+                                Eigen::Vector2d(std::cos(robot.yaw) - std::cos(predicted.yaw),
+                                                std::sin(robot.yaw) - std::sin(predicted.yaw));
+                        }
+                        double score =
+                            trajectoryScore(robot, predicted, candidate, paths[index], encounter);
+                        score += encounterScore(index, checked.endpoint, candidate, robots, paths);
                         if (!found || score < best_score - 1.0e-12 ||
                             (std::abs(score - best_score) <= 1.0e-12 &&
                              checked.min_clearance > best_clearance)) {
@@ -415,133 +591,76 @@ class FleetGuidance {
                 }
             }
             if (found) {
-                robot.nominal = best;
+                robot.command = best;
                 robot.local_plan_feasible = true;
             } else {
                 // Fail-closed: no rolled-out sample is admissible. Command
                 // exact zero; do not publish an unrolled brake as safety.
-                robot.nominal.setZero();
+                robot.command.setZero();
                 robot.local_plan_feasible = false;
             }
-            committed_commands[index] = robot.nominal;
+            committed_commands[index] = robot.command;
             committed[index] = true;
         }
     }
 
    public:
     void clear() {
-        passages_.clear();
-        encounters_.clear();
         priority_cursor_ = 0;
+        observations_.clear();
     }
 
-    void apply(std::vector<Robot>& robots, const std::vector<ConvexObstacle>& obstacles,
-               const Fence& fence, const FilterConfig& config = FilterConfig()) {
-        std::vector<Eigen::Vector2d> velocity;
-        velocity.reserve(robots.size());
-        for (const auto& r : robots) {
-            const double c = std::cos(r.yaw), s = std::sin(r.yaw);
-            velocity.emplace_back(c * r.nominal.x() - s * r.nominal.y(),
-                                  s * r.nominal.x() + c * r.nominal.y());
+    void apply(std::vector<Robot>& robots, const std::vector<ResetPath>& paths,
+               const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
+               const DwaConfig& config = DwaConfig()) {
+        bool valid = paths.size() == robots.size() && std::isfinite(config.dt) && config.dt > 0.0 &&
+                     config.dt <= 0.1 && config.disk_count > 0 && std::isfinite(config.clearance) &&
+                     config.clearance >= 0.0 && std::isfinite(config.uncertainty_margin) &&
+                     config.uncertainty_margin >= 0.0 &&
+                     std::isfinite(config.feasibility_tolerance) &&
+                     config.feasibility_tolerance > 0.0;
+        if (fence.enabled) {
+            valid = valid && std::isfinite(fence.xmin) && std::isfinite(fence.xmax) &&
+                    std::isfinite(fence.ymin) && std::isfinite(fence.ymax) &&
+                    fence.xmin < fence.xmax && fence.ymin < fence.ymax;
         }
-        for (std::size_t i = 0; i < robots.size(); ++i) {
-            for (std::size_t j = i + 1; j < robots.size(); ++j) {
-                const auto& a = robots[i];
-                const auto& b = robots[j];
-                if (!a.active || !b.active || a.stop_requested || b.stop_requested) {
-                    continue;
-                }
-                const Eigen::Vector2d d = b.position - a.position;
-                const double distance = d.norm();
-                if (distance < 1e-8) {
-                    continue;
-                }
-                auto envelope = [&](const Robot& robot) {
-                    double result = 0.0;
-                    for (const auto& disk : coveringDisks(robot, config.disk_count)) {
-                        result =
-                            std::max(result, (disk.center - robot.position).norm() + disk.radius);
-                    }
-                    return result;
-                };
-                const double body_radius =
-                    envelope(a) + envelope(b) + config.clearance + config.uncertainty_margin;
-                const double gain = std::max(config.barrier_gain, 1.0e-6);
-                const double drift = (2 * config.velocity_uncertainty +
-                                      a.lateral_velocity_per_yaw_bound * a.limits.max_omega +
-                                      b.lateral_velocity_per_yaw_bound * b.limits.max_omega) /
-                                     gain;
-                const double radius = drift + std::hypot(drift, body_radius) +
-                                      0.5 * GuidanceOptions().lookahead_distance;
-                const double turn_room =
-                    a.limits.max_vx / a.limits.max_omega + b.limits.max_vx / b.limits.max_omega +
-                    a.lateral_velocity_per_yaw_bound + b.lateral_velocity_per_yaw_bound;
-                const auto pair = std::minmax(a.id, b.id);
-                const std::pair<std::string, std::string> key(pair.first, pair.second);
-                if (distance > radius + turn_room) {
-                    encounters_.erase(key);
-                }
-                if (encounters_.count(key)) {
-                    continue;
-                }
-                const Eigen::Vector2d relative = velocity[i] - velocity[j];
-                const double closing = d.dot(relative);
-                const double time = closing / std::max(relative.squaredNorm(), 1e-8);
-                if (closing <= 0 || distance <= radius || (d - time * relative).norm() > radius ||
-                    distance > radius + turn_room || distance <= radius + 1.0e-6) {
-                    continue;
-                }
-                const Eigen::Vector2d axis = d / distance;
-                const Eigen::Vector2d right(axis.y(), -axis.x());
-                const Eigen::Vector2d middle = 0.5 * (a.position + b.position);
-                const double denominator =
-                    std::sqrt(std::max(1.0e-9, distance * distance - radius * radius));
-                const double lateral = radius * distance / (2 * denominator);
-                bool admitted = false;
-                for (int side : {0, 1}) {
-                    const auto& r = side == 0 ? a : b;
-                    const auto existing = passages_.find(r.id);
-                    if (!r.active || (existing != passages_.end() && !existing->second.complete)) {
-                        continue;
-                    }
-                    const double sign = side == 0 ? 1.0 : -1.0;
-                    ResetTarget target;
-                    target.position = middle + sign * lateral * right;
-                    target.yaw = std::atan2(sign * axis.y(), sign * axis.x());
-                    Passage passage;
-                    passage.partner = side == 0 ? b.id : a.id;
-                    const auto result = passage.guidance.setGoal(r, target, obstacles, fence);
-                    if (result.status == GuidanceStatus::InvalidInput ||
-                        result.status == GuidanceStatus::NoRoute) {
-                        continue;
-                    }
-                    passages_[r.id] = std::move(passage);
-                    admitted = true;
-                }
-                if (admitted) {
-                    encounters_.insert(key);
-                }
-            }
+        for (const auto& obstacle : obstacles) {
+            valid = valid && validConvexObstacle(obstacle);
         }
-
-        for (auto& r : robots) {
-            auto it = passages_.find(r.id);
-            if (!r.active || it == passages_.end() || it->second.complete) {
-                continue;
-            }
-            const auto result = it->second.guidance.step(r);
-            if (result.status == GuidanceStatus::Reached) {
-                it->second.complete = true;
-                continue;
-            }
-            if (result.status == GuidanceStatus::Moving) {
-                r.nominal = result.nominal;
-            } else {
-                r.nominal.setZero();
-            }
+        for (std::size_t i = 0; valid && i < robots.size(); ++i) {
+            const auto& robot = robots[i];
+            const auto status = paths[i].step(robot).status;
+            valid =
+                robot.position.allFinite() && std::isfinite(robot.yaw) &&
+                robot.body_center_offset.allFinite() && std::isfinite(robot.half_length) &&
+                robot.half_length > 0.0 && std::isfinite(robot.half_width) &&
+                robot.half_width > 0.0 && robot.previous.allFinite() &&
+                std::isfinite(robot.lateral_velocity_per_yaw_bound) &&
+                robot.lateral_velocity_per_yaw_bound >= 0.0 &&
+                ((robot.active && !robot.stop_requested) ||
+                 robot.previous.cwiseAbs().maxCoeff() <= config.feasibility_tolerance) &&
+                std::isfinite(robot.limits.max_vx) && robot.limits.max_vx > 0.0 &&
+                std::isfinite(robot.limits.max_vy) && robot.limits.max_vy >= 0.0 &&
+                std::isfinite(robot.limits.max_omega) && robot.limits.max_omega > 0.0 &&
+                std::abs(robot.previous.x()) <= robot.limits.max_vx + 1.0e-9 &&
+                std::abs(robot.previous.y()) <= robot.limits.max_vy + 1.0e-9 &&
+                std::abs(robot.previous.z()) <= robot.limits.max_omega + 1.0e-9 &&
+                (robot.type != RobotType::Unicycle || std::abs(robot.previous.y()) <= 1.0e-9) &&
+                std::isfinite(robot.limits.accel_vx) && robot.limits.accel_vx > 0.0 &&
+                std::isfinite(robot.limits.accel_vy) && robot.limits.accel_vy > 0.0 &&
+                std::isfinite(robot.limits.accel_omega) && robot.limits.accel_omega > 0.0 &&
+                (!robot.active || status == PathStatus::Moving || status == PathStatus::Reached);
         }
-
-        applyDynamicWindow(robots, obstacles, fence, config);
+        if (!valid) {
+            for (auto& robot : robots) {
+                robot.command.setZero();
+                robot.local_plan_feasible = false;
+            }
+            return;
+        }
+        observeMotion(robots, config.dt);
+        const auto routes = planPeerPaths(robots, paths, obstacles, fence);
+        applyDynamicWindow(robots, routes, obstacles, fence, config);
     }
 };
 

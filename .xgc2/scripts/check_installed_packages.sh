@@ -76,20 +76,21 @@ test "$(pkg-config --variable=prefix ugv_reset_safety)" = "/opt/ros/${ROS_DISTRO
 reset_public_cflags_text="$(pkg-config --cflags ugv_reset_safety)"
 read -r -a reset_public_cflags <<< "${reset_public_cflags_text}"
 c++ -std=c++17 -fsyntax-only -x c++ "${reset_public_cflags[@]}" - <<'CPP'
-#include <ugv_reset_safety/fleet_guidance.h>
+#include <ugv_reset_safety/reset_dwa.h>
 #include <ugv_reset_safety/fleet_schedule.h>
 #include <ugv_reset_safety/reset_client.h>
-#include <ugv_reset_safety/reset_guidance.h>
+#include <ugv_reset_safety/reset_path.h>
 #include <ugv_reset_safety/reset_session.h>
-#include <ugv_reset_safety/safety_filter.h>
+#include <ugv_reset_safety/reset_geometry.h>
 int main() { return 0; }
 CPP
 
-reset_osqp_path="$(ldd "/opt/ros/${ROS_DISTRO}/lib/libugv_reset_safety_math.so" |
-  awk '$1 == "libosqp.so" {print $3; exit}')"
-if [[ -z "${reset_osqp_path}" ]] ||
-   [[ "$(readlink -f "${reset_osqp_path}")" != "$(readlink -f /opt/xgc2/acados/lib/libosqp.so)" ]]; then
-  echo "Reset safety library resolved an unexpected OSQP: ${reset_osqp_path}" >&2
+for retired_header in safety_filter.h reset_guidance.h fleet_guidance.h; do
+  test ! -e "/opt/ros/${ROS_DISTRO}/include/ugv_reset_safety/${retired_header}"
+done
+
+if ldd "/opt/ros/${ROS_DISTRO}/lib/libugv_reset_safety_math.so" | grep -q 'libosqp'; then
+  echo "Reset path/DWA library still links the retired QP solver" >&2
   exit 1
 fi
 echo "Installed package check passed"

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include <ugv_reset_safety/fleet_guidance.h>
 #include <ugv_reset_safety/fleet_schedule.h>
-#include <ugv_reset_safety/reset_guidance.h>
+#include <ugv_reset_safety/reset_dwa.h>
+#include <ugv_reset_safety/reset_path.h>
 
 #include <algorithm>
 #include <cmath>
@@ -44,7 +44,7 @@ double pointSegmentDistance(const Eigen::Vector2d& point, const Eigen::Vector2d&
 }
 
 // Independent full-rectangle collision audit: SAT plus segment distances,
-// rather than reusing the filter's disk approximation or barrier residual.
+// rather than reusing the DWA's footprint check.
 double polygonClearance(const Polygon& first, const Polygon& second) {
     bool separated = false;
     double penetration = std::numeric_limits<double>::infinity();
@@ -104,15 +104,13 @@ struct ScenarioResult {
     double max_position_error{0.0};
     double max_yaw_error{0.0};
     double min_clearance{std::numeric_limits<double>::infinity()};
-    int safety_limited_steps{0};
-    double last_safety_adjustment{0.0};
+    int infeasible_steps{0};
     std::string describe() const {
         std::ostringstream out;
         out << "completed=" << completed << "; " << failure << "; elapsed=" << elapsed
             << "; position=" << max_position_error << "; yaw=" << max_yaw_error
             << "; physical clearance=" << min_clearance
-            << "; safety limited steps=" << safety_limited_steps
-            << "; last safety adjustment=" << last_safety_adjustment;
+            << "; infeasible steps=" << infeasible_steps;
         return out.str();
     }
 };
@@ -148,46 +146,34 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
     Fence fence;
     fence.xmin = fence.ymin = -5.0;
     fence.xmax = fence.ymax = 5.0;
-    FilterConfig filter;
-    filter.dt = 0.02;
-    filter.clearance = 0.08;
-    filter.uncertainty_margin = 0.03;
+    DwaConfig config;
+    config.dt = 0.02;
+    config.clearance = 0.08;
+    config.uncertainty_margin = 0.03;
     for (auto& robot : robots) {
         // Keep one configured bound across trials; do not give the controller
         // the exact synthetic plant coefficient in each scenario.
         if (robot.type == RobotType::Unicycle) {
             robot.lateral_velocity_per_yaw_bound = 0.25;
         }
-        const double linear_rate = robot.type == RobotType::Unicycle
-                                       ? robot.limits.accel_vx
-                                       : std::hypot(robot.limits.accel_vx, robot.limits.accel_vy);
-        const double max_disk_offset = robot.body_center_offset.norm() + robot.half_length / 2.0;
-        // First-order lag driven by slew-bounded commands has |v-u| <= tau*a
-        // when initialized at rest. Include angular velocity error at each
-        // covering disk and the uncertain lateral-offset contribution.
-        filter.velocity_uncertainty =
-            std::max(filter.velocity_uncertainty,
-                     plant.linear_lag * linear_rate +
-                         (max_disk_offset + robot.lateral_velocity_per_yaw_bound) *
-                             plant.angular_lag * robot.limits.accel_omega);
     }
     if (production_profile) {
-        filter.velocity_uncertainty = 0.1;
-        filter.uncertainty_margin = 0.05;
+        config.uncertainty_margin = 0.05;
     }
-    std::vector<ResetGuidance> guides(robots.size());
-    FleetGuidance passing;
-    FleetSchedule schedule(filter.clearance + filter.uncertainty_margin);
+    std::vector<ResetPath> paths(robots.size());
+    ResetDwa dwa;
+    FleetSchedule schedule(config.clearance + config.uncertainty_margin);
     std::vector<bool> completed(robots.size(), false), selected(robots.size(), false);
-    std::vector<ConvexObstacle> guidance_obstacles = obstacles;
+    std::vector<ConvexObstacle> path_obstacles = obstacles;
     std::ofstream trace;
     if (!trace_file.empty()) {
         trace.open(trace_file);
         trace << std::setprecision(12)
-              << "time,robot,x,y,yaw,actual_vx,actual_vy,actual_omega,nominal_vx,nominal_vy,"
-                 "nominal_omega,command_vx,command_vy,command_omega,waypoint,guard_clearance\n";
+              << "time,robot,x,y,yaw,actual_vx,actual_vy,actual_omega,"
+                 "command_vx,command_vy,command_omega,path_remaining\n";
     }
     std::vector<Eigen::Vector3d> actual(robots.size(), Eigen::Vector3d::Zero());
+    double stationary_time = 0.0;
     auto finish = [&]() {
         for (std::size_t i = 0; i < robots.size(); ++i) {
             result.max_position_error = std::max(result.max_position_error,
@@ -197,12 +183,8 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
             if (!result.completed && !result.initial_route_rejected) {
                 std::ostringstream detail;
                 detail << "; robot " << i << " pose " << robots[i].position.transpose() << " yaw "
-                       << robots[i].yaw << " nominal " << robots[i].nominal.transpose()
-                       << " command " << robots[i].previous.transpose() << " waypoint "
-                       << guides[i].waypointIndex() << "/" << guides[i].path().size();
-                if (guides[i].waypointIndex() < guides[i].path().size()) {
-                    detail << " at " << guides[i].path()[guides[i].waypointIndex()].transpose();
-                }
+                       << robots[i].yaw << " command " << robots[i].previous.transpose()
+                       << " path size " << paths[i].path().size();
                 result.failure += detail.str();
             }
         }
@@ -216,8 +198,8 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
         result.failure = "schedule admission rejected: " + admission.detail;
         return finish();
     }
-    for (int step = 0; step < static_cast<int>(duration / filter.dt); ++step) {
-        result.elapsed = step * filter.dt;
+    for (int step = 0; step < static_cast<int>(duration / config.dt); ++step) {
+        result.elapsed = step * config.dt;
         for (std::size_t i = 0; i < robots.size(); ++i) {
             const double vy = robots[i].type == RobotType::Unicycle
                                   ? -plant.lateral_offset * actual[i].z()
@@ -244,19 +226,19 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
         }
         if (next_selected != selected) {
             selected = next_selected;
-            passing.clear();
-            guidance_obstacles = obstacles;
+            dwa.clear();
+            path_obstacles = obstacles;
             const auto parked = parkedPeerObstacles(robots, selected);
-            guidance_obstacles.insert(guidance_obstacles.end(), parked.begin(), parked.end());
+            path_obstacles.insert(path_obstacles.end(), parked.begin(), parked.end());
             for (std::size_t i = 0; i < robots.size(); ++i) {
                 if (!selected[i]) {
                     continue;
                 }
                 const auto status =
-                    guides[i].setGoal(robots[i], goals[i], guidance_obstacles, fence).status;
-                if (status == GuidanceStatus::InvalidInput || status == GuidanceStatus::NoRoute) {
-                    result.initial_route_rejected = step == 0 && status == GuidanceStatus::NoRoute;
-                    result.failure = "group guidance rejected robot " + std::to_string(i);
+                    paths[i].setGoal(robots[i], goals[i], path_obstacles, fence).status;
+                if (status == PathStatus::InvalidInput || status == PathStatus::NoRoute) {
+                    result.initial_route_rejected = step == 0 && status == PathStatus::NoRoute;
+                    result.failure = "route rejected robot " + std::to_string(i);
                     return finish();
                 }
             }
@@ -264,17 +246,16 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
         for (std::size_t i = 0; i < robots.size(); ++i) {
             robots[i].active = selected[i];
             robots[i].stop_requested = false;
-            robots[i].nominal.setZero();
+            robots[i].command.setZero();
             if (selected[i]) {
-                const auto guidance = guides[i].step(robots[i]);
-                robots[i].nominal = guidance.nominal;
+                const auto path_result = paths[i].step(robots[i]);
                 const double vy = robots[i].type == RobotType::Unicycle
                                       ? -plant.lateral_offset * actual[i].z()
                                       : actual[i].y();
                 const bool at_xy = withinTargetTolerance(robots[i], goals[i]);
                 robots[i].stop_requested =
-                    (guidance.status == GuidanceStatus::Reached || at_xy) &&
-                    robots[i].previous.cwiseAbs().maxCoeff() <= filter.feasibility_tolerance &&
+                    (path_result.status == PathStatus::Reached || at_xy) &&
+                    robots[i].previous.cwiseAbs().maxCoeff() <= config.feasibility_tolerance &&
                     std::hypot(actual[i].x(), vy) <= 0.03 && std::abs(actual[i].z()) <= 0.05;
             } else {
                 // A group switch only parks a robot after an applied zero
@@ -282,10 +263,22 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                 robots[i].previous.setZero();
             }
         }
-        passing.apply(robots, guidance_obstacles, fence, filter);
+        dwa.apply(robots, paths, path_obstacles, fence, config);
         std::vector<Eigen::Vector3d> commands(robots.size(), Eigen::Vector3d::Zero());
         for (std::size_t i = 0; i < robots.size(); ++i) {
-            commands[i] = robots[i].active ? robots[i].nominal : Eigen::Vector3d::Zero();
+            commands[i] = robots[i].active ? robots[i].command : Eigen::Vector3d::Zero();
+            if (robots[i].active && !robots[i].local_plan_feasible) {
+                ++result.infeasible_steps;
+            }
+        }
+        bool stationary = true;
+        for (std::size_t i = 0; i < robots.size(); ++i) {
+            stationary = stationary && commands[i].norm() < 1.0e-6 && actual[i].norm() < 1.0e-6;
+        }
+        stationary_time = stationary ? stationary_time + config.dt : 0.0;
+        if (stationary_time > 10.0) {
+            result.failure = "fleet stationary without arrival for 10 s";
+            return finish();
         }
         if (trace.is_open()) {
             for (std::size_t i = 0; i < robots.size(); ++i) {
@@ -295,22 +288,19 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                     trace << ',' << actual[i][axis];
                 }
                 for (int axis = 0; axis < 3; ++axis) {
-                    trace << ',' << robots[i].nominal[axis];
-                }
-                for (int axis = 0; axis < 3; ++axis) {
                     trace << ',' << commands[i][axis];
                 }
-                trace << ',' << guides[i].waypointIndex() << ',' << 0.0 << '\n';
+                trace << ',' << paths[i].project(robots[i].position).remaining << ',' << 0.0
+                      << '\n';
             }
         }
-        result.last_safety_adjustment = 0.0;
         for (std::size_t i = 0; i < robots.size(); ++i) {
             const Eigen::Vector3d accelerations(
                 robots[i].limits.accel_vx, robots[i].limits.accel_vy, robots[i].limits.accel_omega);
             // Fail-closed DWA may command exact zero outside the dynamic
             // window. Certified samples must still respect acceleration.
             if (robots[i].active && robots[i].local_plan_feasible &&
-                ((commands[i] - robots[i].previous).cwiseAbs() - filter.dt * accelerations)
+                ((commands[i] - robots[i].previous).cwiseAbs() - config.dt * accelerations)
                         .maxCoeff() > 2.0e-6) {
                 result.failure = "command slew exceeded";
                 return finish();
@@ -321,7 +311,7 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
             }
         }
         // Ten plant steps per command audit intersample footprint clearance.
-        const double dt = filter.dt / 10.0;
+        const double dt = config.dt / 10.0;
         for (int substep = 0; substep < 10; ++substep) {
             for (std::size_t i = 0; i < robots.size(); ++i) {
                 for (int axis = 0; axis < 3; ++axis) {
@@ -458,7 +448,8 @@ TEST(ResetScenarios, TwoRobotsCrossingHeadOnAndPositionSwap) {
             const ResetTarget second_goal{
                 encounter == 0 ? Eigen::Vector2d(0.0, 2.0) : Eigen::Vector2d(-2.0, 0.0),
                 encounter == 2 ? 0.0 : second.yaw};
-            // Match the production batch timeout. Both robots start together.
+            // Both robots start together; the four-Scout test below enforces the 45 s owner
+            // timeout.
             const auto result =
                 runScenario({first, second}, {first_goal, second_goal}, {}, {}, 600.0);
             EXPECT_TRUE(result.completed)
@@ -557,15 +548,48 @@ TEST(ResetScenarios, SeededSparseLayoutsWithProductionScoutProfile) {
     RecordProperty("completed", completed);
     RecordProperty("rejected_before_motion", rejected_before_motion);
     RecordProperty("eligible_failures", eligible_failures);
-    // Ensure the generator exercises navigation rather than passing because
+    // Ensure the generator exercises navigation rather than dwa because
     // every start or goal is rejected by conservative footprint admission.
     EXPECT_GE(completed + eligible_failures, 90);
+}
+
+TEST(ResetScenarios, ScoutProductionCloseGoalsAndTransportPose) {
+    auto production = [](double yaw) {
+        auto robot = makeRobot("scout", RobotType::Unicycle, 0.0, 0.0, yaw);
+        robot.limits.max_vx = 0.35;
+        robot.limits.max_vy = 0.0;
+        robot.limits.max_omega = 0.5;
+        robot.limits.accel_vx = robot.limits.accel_vy = 0.35;
+        robot.limits.accel_omega = 0.6;
+        return robot;
+    };
+    for (double offset : {0.0, 0.229, 0.25}) {
+        for (double range : {0.051, 0.08, 0.12, 0.30, 2.4}) {
+            for (double bearing : {0.0, kPi / 2.0}) {
+                for (double yaw : {0.0, 0.9, kPi / 2.0, kPi}) {
+                    const ResetTarget target{
+                        range * Eigen::Vector2d(std::cos(bearing), std::sin(bearing)), -0.8};
+                    const auto result = runScenario({production(yaw)}, {target}, {},
+                                                    {offset, 0.12, 0.16}, 45.0, true);
+                    EXPECT_TRUE(result.completed)
+                        << "offset=" << offset << " range=" << range << " bearing=" << bearing
+                        << " yaw=" << yaw << ": " << result.describe();
+                    EXPECT_FALSE(result.collision);
+                }
+            }
+        }
+    }
+    auto transport = production(0.35);
+    transport.position = {-0.6, 0.25};
+    const auto result =
+        runScenario({transport}, {{{0.0, 0.0}, 0.0}}, {}, {0.229, 0.12, 0.16}, 45.0, true);
+    EXPECT_TRUE(result.completed) << result.describe();
 }
 
 TEST(ResetScenarios, FourScoutsCrossAndReturnWithProductionProfile) {
     const std::vector<Eigen::Vector2d> corners{{-2.5, -2.0}, {2.5, -2.0}, {2.5, 2.0}, {-2.5, 2.0}};
     for (const Plant plant : {Plant{}, Plant{0.229, 0.12, 0.16}}) {
-        // Opposite-corner exchange; all four start together under the joint CBF.
+        // Opposite-corner exchange; all four start together under the DWA.
         for (int leg = 0; leg < 2; ++leg) {
             std::vector<Robot> robots;
             std::vector<ResetTarget> goals;
@@ -584,7 +608,7 @@ TEST(ResetScenarios, FourScoutsCrossAndReturnWithProductionProfile) {
                 robots.push_back(robot);
                 goals.push_back({target, 0.4 + 0.7 * i});
             }
-            const auto result = runScenario(robots, goals, {}, plant, 600.0, true,
+            const auto result = runScenario(robots, goals, {}, plant, 45.0, true,
                                             plant.lateral_offset == 0.0 && leg == 0
                                                 ? "/tmp/ugv_reset_four_scout_trace.csv"
                                                 : "");

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <ugv_reset_safety/reset_guidance.h>
+#include <ugv_reset_safety/reset_path.h>
 
 #include <algorithm>
 #include <cmath>
@@ -35,8 +35,8 @@ struct ScheduleResult {
 // Batch admission for one Reset cohort, not a complete multi-agent planner.
 // Every requesting robot starts together after /command reset. Target-overlap
 // and a nonparticipant sitting on a requested goal still reject before motion.
-// Goal occupancy cycles are not serialized; the joint CBF plus geometric
-// guidance own crossing traffic. Non-requesting robots stay parked obstacles.
+// Goal occupancy cycles are not serialized; path planning and DWA own crossing traffic.
+// Non-requesting robots stay parked obstacles.
 //
 // A completion bit means BOTH original target arrival AND measured stop, not
 // merely a zero desired input. This does not prove geometric route existence,
@@ -172,7 +172,7 @@ class FleetSchedule {
 };
 
 // Exact rectangular footprints of every nonselected peer, frozen only for
-// geometric route initialization. The safety QP must still include these
+// geometric route initialization. DWA rollouts must still include these
 // peers at their fresh actual pose as hard stationary constraints.
 inline std::vector<ConvexObstacle> parkedPeerObstacles(const std::vector<Robot>& robots,
                                                        const std::vector<bool>& selected_mask) {

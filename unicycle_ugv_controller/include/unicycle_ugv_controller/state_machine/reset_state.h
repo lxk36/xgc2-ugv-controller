@@ -22,7 +22,7 @@ class ResetState final : public ::state_machine::State {
 
    private:
     void emitCommand(::state_machine::StateContext& ctx, const ControlCommand& command);
-    void emitZero(::state_machine::StateContext& ctx);
+    void emitZero(::state_machine::StateContext& ctx, bool force = false);
     void postDone(::state_machine::StateContext& ctx, ::state_machine::EventId id);
 
     UnicycleUgvController& controller_;

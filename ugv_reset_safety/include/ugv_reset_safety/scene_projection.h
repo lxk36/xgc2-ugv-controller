@@ -1,5 +1,5 @@
 #pragma once
-#include <ugv_reset_safety/safety_filter.h>
+#include <ugv_reset_safety/reset_geometry.h>
 #include <xgc2_geometry_msgs/SceneSnapshot.h>
 #include <xgc2_geometry_msgs/SceneState.h>
 

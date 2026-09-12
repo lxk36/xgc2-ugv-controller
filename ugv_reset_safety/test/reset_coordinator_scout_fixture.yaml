@@ -6,8 +6,6 @@ world_frame: world
 scene_namespace: /reset_fixture/scene
 clearance: 0.08
 uncertainty_margin: 0.03
-velocity_uncertainty: 0.10
-barrier_gain: 1.0
 fence: {x_min: -3.0, x_max: 3.0, y_min: -3.0, y_max: 3.0}
 robots:
   - namespace: reset_fixture_robot

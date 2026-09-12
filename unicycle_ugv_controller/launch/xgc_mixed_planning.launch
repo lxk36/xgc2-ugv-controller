@@ -68,4 +68,19 @@
     <remap from="/uav8/mavros/local_position/pose" to="/ugv3/pose"/>
     <remap from="/uav9/mavros/local_position/pose" to="/ugv4/pose"/>
   </node>
+  <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+    <arg name="ns" value="uav1"/><arg name="tracking_backend" value="px4_local"/><arg name="local_type_mask" value="3072"/>
+  </include>
+  <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+    <arg name="ns" value="uav2"/><arg name="tracking_backend" value="px4_local"/><arg name="local_type_mask" value="3072"/>
+  </include>
+  <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+    <arg name="ns" value="uav3"/><arg name="tracking_backend" value="px4_local"/><arg name="local_type_mask" value="3072"/>
+  </include>
+  <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+    <arg name="ns" value="uav4"/><arg name="tracking_backend" value="px4_local"/><arg name="local_type_mask" value="3072"/>
+  </include>
+  <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+    <arg name="ns" value="uav5"/><arg name="tracking_backend" value="px4_local"/><arg name="local_type_mask" value="3072"/>
+  </include>
 </launch>

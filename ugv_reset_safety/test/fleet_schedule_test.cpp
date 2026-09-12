@@ -132,10 +132,10 @@ TEST(FleetSchedule, SelectedRobotRoutesAroundParkedPeerRatherThanThroughIt) {
     const auto selected = schedule.initialize(robots, targets);
     ASSERT_EQ(selected.status, ScheduleStatus::Ready);
     ASSERT_EQ(selected.selected, std::vector<std::size_t>({0}));
-    ResetGuidance guidance;
+    ResetPath guidance;
     const auto planned = guidance.setGoal(robots[0], targets[0],
                                           parkedPeerObstacles(robots, {true, false}), Fence());
-    ASSERT_EQ(planned.status, GuidanceStatus::Moving) << planned.message;
+    ASSERT_EQ(planned.status, PathStatus::Moving) << planned.message;
     EXPECT_GE(guidance.path().size(), 4U);
 }
 

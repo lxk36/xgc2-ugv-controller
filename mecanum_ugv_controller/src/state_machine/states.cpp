@@ -103,7 +103,7 @@ ResetState::ResetState(MecanumUgvController& controller) : controller_(controlle
             "[MecanumUgvController] Reset entered without a valid goal; "
             "holding Reset until timeout/Stop or a cached initialPose");
     }
-    emitZero(ctx);
+    emitZero(ctx, true);
     return {};
 }
 
@@ -166,7 +166,7 @@ ResetState::ResetState(MecanumUgvController& controller) : controller_(controlle
 
 ::state_machine::ActionResult ResetState::onExit(::state_machine::StateContext& ctx) {
     controller_.resetSession().cancel();
-    emitZero(ctx);
+    emitZero(ctx, true);
     command_gate_.reset();
     return {};
 }
@@ -183,8 +183,14 @@ void ResetState::emitCommand(::state_machine::StateContext& ctx, const ControlCo
                                ::state_machine::EventTimestamp{controller_.currentTime()}));
 }
 
-void ResetState::emitZero(::state_machine::StateContext& ctx) {
+void ResetState::emitZero(::state_machine::StateContext& ctx, bool force) {
+    const auto cfg = controller_.config();
     controller_.clearCommand();
+    const double period =
+        cfg.idle_cmd_rate_hz > 0.0 ? 1.0 / cfg.idle_cmd_rate_hz : 1.0 / cfg.command_publish_rate_hz;
+    if (!force && !command_gate_.due(ugv_reset_safety::monotonicSeconds(), period)) {
+        return;
+    }
     ctx.emitOutput(
         ::state_machine::Event(output_event_type::PUBLISH_ZERO_CMD_VEL,
                                ::state_machine::EventTimestamp{controller_.currentTime()}));
