@@ -303,7 +303,7 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
         self.wait(self.moving, 3.0, "new Reset generation should run after a measured stop")
         with self.lock:
             self.publish_pose = False
-        self.wait(lambda: self.stopped() and self.state == "Reset", 0.6,
+        self.wait(lambda: self.stopped() and self.state == "SelfCheck", 0.6,
                   "loss of canonical pose must stop and leave Reset")
 
     def test_coordinator_does_not_own_command_or_cmd_vel(self):

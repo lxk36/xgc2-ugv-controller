@@ -112,6 +112,18 @@ TEST(ResetPath, RejectsInvalidGeometryAndOccupiedTarget) {
                     .invalid_input);
 }
 
+TEST(ResetPath, CorneringReserveDoesNotRejectClearStartOrGoal) {
+    auto robot = makeRobot();
+    const auto wall = box(-0.2, 0.2, -2.0, 2.0);
+    // Radius 0.30 + path clearance 0.18 fit; extra lookahead reserve does not.
+    robot.position = {-0.8, 0.0};
+    ResetPath path;
+    EXPECT_EQ(path.setGoal(robot, {{-2.0, 0.0}, 0.0}, {wall}, Fence()).status, PathStatus::Moving);
+    robot.position = {-2.0, 0.0};
+    EXPECT_EQ(path.setGoal(robot, {{-0.8, 0.0}, 0.0}, {wall}, Fence()).status, PathStatus::Moving);
+    EXPECT_EQ(path.setGoal(robot, {{-0.6, 0.0}, 0.0}, {wall}, Fence()).status, PathStatus::NoRoute);
+}
+
 TEST(ResetPath, ClockwiseAndCollinearConvexGeometryHaveEquivalentRoutes) {
     auto obstacle = box(-0.5, 0.5, -0.5, 0.5);
     const auto baseline = planVisibilityPath({-2, 0}, {2, 0}, {obstacle}, Fence(), 0.3, 0.1);

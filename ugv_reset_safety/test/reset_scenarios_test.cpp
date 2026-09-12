@@ -600,6 +600,23 @@ TEST(ResetScenarios, GazeboPositiveLateralMotionDoesNotOrbitTheResetTarget) {
     EXPECT_LE(result.max_position_error, 0.05);
 }
 
+TEST(ResetScenarios, ParkedScoutNearFieldPostCanReturnWithFullClearance) {
+    auto robot = makeRobot("ugv2", RobotType::Unicycle, 2.5607, 3.0987, -1.941);
+    robot.half_length = 0.31;
+    robot.half_width = 0.26;
+    robot.limits = {0.35, 0.0, 0.5, 0.35, 0.35, 0.6};
+    const std::vector<ConvexObstacle> field{
+        obstacle("post3", 2.0, 3.95, 0.5, 0.5), obstacle("post4", -0.8, 2.8093, 0.5, 0.5),
+        obstacle("post5", -3.6719, 3.35, 0.5, 0.5), obstacle("post6", -7.0, 0.6, 0.5, 0.5)};
+    for (double offset : {-0.229, 0.229}) {
+        const auto result = runScenario({robot}, {{{-2.1269, -1.6145}, 0.2602}}, field,
+                                        {offset, 0.12, 0.16}, 90.0, true);
+        EXPECT_TRUE(result.completed) << result.describe();
+        EXPECT_FALSE(result.collision);
+        EXPECT_LE(result.max_position_error, 0.05);
+    }
+}
+
 TEST(ResetScenarios, FourScoutsCrossAndReturnWithProductionProfile) {
     const std::vector<Eigen::Vector2d> corners{{-2.5, -2.0}, {2.5, -2.0}, {2.5, 2.0}, {-2.5, 2.0}};
     for (const Plant plant : {Plant{}, Plant{-0.229, 0.12, 0.16}, Plant{0.229, 0.12, 0.16}}) {

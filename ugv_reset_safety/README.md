@@ -38,7 +38,9 @@ remain stationary collision obstacles.
 `ResetPath` owns only geometry, the frozen original target, and arrival tests.
 Visibility-graph Dijkstra plans around inflated convex polygons. Inflation covers
 the circumscribed robot footprint, path clearance, and half the path lookahead
-for corner tracking. A path lookahead point is a geometric scoring reference;
+for preferred corner tracking room. If that extra lookahead reserve prevents a
+route, planning retries with the full footprint and path clearance; the hard
+DWA margins stay unchanged. A path lookahead point is a geometric scoring reference;
 it produces no nominal velocity or extra control phase.
 
 `ResetDwa` samples body velocities from the intersection of chassis speed limits

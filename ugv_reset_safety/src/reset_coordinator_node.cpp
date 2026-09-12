@@ -436,8 +436,9 @@ class Coordinator {
         // consulting any previous generation's rejection or freezing members.
         const bool awaiting_state =
             std::any_of(entries_.begin(), entries_.end(), [&](const auto& e) {
-                return e->have_request && (wall - e->request_wall).toSec() <= timeout_ &&
-                       e->state != "Reset";
+                const bool fresh_request =
+                    e->have_request && (wall - e->request_wall).toSec() <= timeout_;
+                return fresh_request != (e->state == "Reset");
             });
         if ((wall - last_admission_).toSec() < timeout_ ||
             (awaiting_state && (wall - last_admission_).toSec() < state_timeout_)) {

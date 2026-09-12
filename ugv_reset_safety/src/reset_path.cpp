@@ -310,6 +310,14 @@ PathResult ResetPath::setGoal(const Robot& robot, const ResetTarget& target,
         std::hypot(robot.half_length, robot.half_width) + robot.body_center_offset.norm();
     auto result = planVisibilityPath(robot.position, target.position, obstacles, fence, radius,
                                      planningClearance());
+    if (!result.valid && !result.invalid_input) {
+        // Lookahead adds preferred cornering room, not a second admission
+        // boundary. A parked robot may already be inside that extra reserve.
+        // Retain the full footprint and configured path clearance; DWA still
+        // checks every selected trajectory against its unchanged hard margins.
+        result = planVisibilityPath(robot.position, target.position, obstacles, fence, radius,
+                                    options_.path_clearance);
+    }
     if (!result.valid) {
         status_ = result.invalid_input ? PathStatus::InvalidInput : PathStatus::NoRoute;
         message_ = result.message;

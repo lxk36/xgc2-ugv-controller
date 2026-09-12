@@ -71,6 +71,13 @@ class ResetCohortTest(unittest.TestCase):
                     request_pub.publish(request)
         timer = rospy.Timer(rospy.Duration(.01), publish)
         try:
+            # Publishing before TCPROS has connected tests startup loss, not
+            # staggered admission. Establish every transport before commands.
+            connected_deadline = time.monotonic() + 5.0
+            while (not all(pub.get_num_connections() for group in pubs for pub in group)
+                   and time.monotonic() < connected_deadline):
+                time.sleep(.01)
+            self.assertTrue(all(pub.get_num_connections() for group in pubs for pub in group))
             time.sleep(.5)
             for generation, count in ((1, 4), (2, 3), (3, 4), (4, 4)):
                 with lock:
