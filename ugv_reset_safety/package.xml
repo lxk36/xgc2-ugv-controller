@@ -5,7 +5,6 @@
   <description>Coordinated UGV reset with geometric path planning and dynamic-window local planning.</description>
   <maintainer email="apt@example.com">XGC2</maintainer>
   <license>MIT</license>
-  <license>BSD-3-Clause</license>
   <buildtool_depend>catkin</buildtool_depend>
   <build_depend>message_generation</build_depend>
   <exec_depend>message_runtime</exec_depend>

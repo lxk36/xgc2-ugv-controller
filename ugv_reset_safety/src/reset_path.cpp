@@ -5,8 +5,6 @@
 #include <limits>
 #include <utility>
 
-#include "reeds_shepp_distance.h"
-
 namespace ugv_reset_safety {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
@@ -291,19 +289,30 @@ bool withinTargetTolerance(const Robot& robot, const ResetTarget& target,
            std::abs(wrap(target.yaw - robot.yaw)) <= options.yaw_tolerance;
 }
 
-double unicyclePoseDistance(const Robot& robot, const ResetTarget& target, double lateral_offset) {
+double ResetPath::unicycleGoalCost(const Robot& robot, double lateral_offset) const {
     // Score in the unicycle's rotation-center coordinates. Apply the same
     // rigid offset to both poses; the frozen body-origin target is unchanged.
     const Eigen::Vector2d center =
         robot.position + lateral_offset * Eigen::Vector2d(std::cos(robot.yaw), std::sin(robot.yaw));
     const Eigen::Vector2d goal =
-        target.position +
-        lateral_offset * Eigen::Vector2d(std::cos(target.yaw), std::sin(target.yaw));
-    const double radius = robot.limits.max_vx / robot.limits.max_omega;
-    const Eigen::Vector2d delta = (goal - center) / radius;
-    const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
-    return radius * reedsSheppDistance(c * delta.x() + s * delta.y(),
-                                       -s * delta.x() + c * delta.y(), target.yaw - robot.yaw);
+        target_.position +
+        lateral_offset * Eigen::Vector2d(std::cos(target_.yaw), std::sin(target_.yaw));
+    const Eigen::Vector2d delta = goal - center;
+    // Independent vx/omega limits permit rotation at zero forward speed.
+    // Evaluate the remaining rotate/translate/rotate travel time, scaled by
+    // max_vx to keep the path score in length units. This ratio converts units;
+    // it is not a minimum turning radius. DWA still chooses every command.
+    const double turn_length = robot.limits.max_vx / robot.limits.max_omega;
+    if (delta.norm() <= options_.position_tolerance) {
+        return turn_length * std::abs(wrap(target_.yaw - robot.yaw));
+    }
+    const double bearing = std::atan2(delta.y(), delta.x());
+    double turning = std::numeric_limits<double>::infinity();
+    for (const double heading : {bearing, bearing + kPi}) {
+        turning = std::min(
+            turning, std::abs(wrap(heading - robot.yaw)) + std::abs(wrap(target_.yaw - heading)));
+    }
+    return delta.norm() - options_.position_tolerance + turn_length * turning;
 }
 
 void ResetPath::clear() {

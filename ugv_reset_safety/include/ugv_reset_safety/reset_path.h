@@ -39,8 +39,6 @@ bool validConvexObstacle(const ConvexObstacle& obstacle);
 bool withinTargetTolerance(const Robot& robot, const ResetTarget& target,
                            const PathOptions& options = PathOptions());
 
-double unicyclePoseDistance(const Robot& robot, const ResetTarget& target, double lateral_offset);
-
 VisibilityPath planVisibilityPath(const Eigen::Vector2d& start, const Eigen::Vector2d& goal,
                                   const std::vector<ConvexObstacle>& obstacles, const Fence& fence,
                                   double radius, double clearance);
@@ -61,6 +59,7 @@ class ResetPath {
     PathResult step(const Robot& robot) const;
     Projection project(const Eigen::Vector2d& position) const;
     Eigen::Vector2d pointAhead(const Eigen::Vector2d& position, double distance) const;
+    double unicycleGoalCost(const Robot& robot, double lateral_offset) const;
     void clear();
     const std::vector<Eigen::Vector2d>& path() const {
         return path_;

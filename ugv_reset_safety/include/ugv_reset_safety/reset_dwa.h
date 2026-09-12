@@ -394,7 +394,7 @@ class ResetDwa {
         }
         if (robot.type == RobotType::Unicycle &&
             path.project(robot.position).remaining <= path.lookahead()) {
-            return 2.0 * unicyclePoseDistance(endpoint, path.target(), lateral_offset) +
+            return 2.0 * path.unicycleGoalCost(endpoint, lateral_offset) +
                    0.2 * command.squaredNorm();
         }
         double score =
