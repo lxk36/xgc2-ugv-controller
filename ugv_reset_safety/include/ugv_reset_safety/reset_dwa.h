@@ -386,8 +386,11 @@ class ResetDwa {
     static double trajectoryScore(const Robot& robot, const Robot& endpoint,
                                   const Eigen::Vector3d& command, const ResetPath& path,
                                   bool encounter, double lateral_offset) {
-        if (path.reached(robot)) {
-            return command.squaredNorm();
+        // Score the predicted goal set, not just the current pose. This starts
+        // braking before entering the set and permits an actual stopped
+        // solution without demanding an exact, unquantized target pose.
+        if (path.reached(endpoint)) {
+            return 0.2 * command.squaredNorm();
         }
         if (robot.type == RobotType::Unicycle &&
             path.project(robot.position).remaining <= path.lookahead()) {
@@ -422,10 +425,6 @@ class ResetDwa {
                                            (path.lookahead() * path.lookahead())) *
                          error * error;
             }
-        }
-        // At the original target, prefer a stopped prediction over coasting.
-        if (path.reached(endpoint)) {
-            score += command.squaredNorm();
         }
         return score;
     }
