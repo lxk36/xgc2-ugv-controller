@@ -568,13 +568,19 @@ class Coordinator {
                 return;
             }
             paths[i] = e.path;
-            // A zero command is acknowledged before arrival, but measured
-            // motion can still coast across the goal boundary. Use the same
-            // horizon as DWA to check the observed motion stays inside the
-            // accepted pose region before releasing native Reset ownership.
+            // An inward instantaneous velocity must not cancel pose error at
+            // release: the chassis can still settle outward after zero is
+            // acknowledged. Reserve the observed motion magnitude over DWA's
+            // horizon in either direction, using the unchanged goal tolerance.
             Robot coast = robots[i];
-            coast.position += e.measured_velocity * ResetDwa::predictionHorizon();
-            coast.yaw += e.measured_omega * ResetDwa::predictionHorizon();
+            Eigen::Vector2d outward = robots[i].position - e.path.target().position;
+            outward = outward.norm() > 1e-9 ? Eigen::Vector2d(outward.normalized())
+                                            : Eigen::Vector2d::UnitX();
+            coast.position += outward * e.measured_speed * ResetDwa::predictionHorizon();
+            const double yaw_error = std::atan2(std::sin(robots[i].yaw - e.path.target().yaw),
+                                                std::cos(robots[i].yaw - e.path.target().yaw));
+            coast.yaw += std::copysign(std::abs(e.measured_omega) * ResetDwa::predictionHorizon(),
+                                       yaw_error);
             robots[i].stop_requested =
                 g.status == PathStatus::Reached && e.path.reached(coast) &&
                 robots[i].previous.cwiseAbs().maxCoeff() <= dwa_config_.feasibility_tolerance &&
