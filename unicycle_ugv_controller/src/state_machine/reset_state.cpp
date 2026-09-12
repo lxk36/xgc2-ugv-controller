@@ -21,10 +21,10 @@ ResetState::ResetState(UnicycleUgvController& controller) : controller_(controll
         controller_.resetSession().begin({target.x, target.y, target.yaw});
         controller_.setResetHoldReason({});
     } else {
-        controller_.setResetHoldReason(
-            "no target: reset_pose cache and reset_initial_* missing");
-        ROS_ERROR("[UnicycleUgvController] Reset entered without a valid goal; "
-                  "holding Reset until timeout/Stop or a cached initialPose");
+        controller_.setResetHoldReason("no target: reset_pose cache and reset_initial_* missing");
+        ROS_ERROR(
+            "[UnicycleUgvController] Reset entered without a valid goal; "
+            "holding Reset until timeout/Stop or a cached initialPose");
     }
     emitZero(ctx);
     return {};
@@ -52,8 +52,9 @@ ResetState::ResetState(UnicycleUgvController& controller) : controller_(controll
         } else {
             emitZero(ctx);
             ROS_ERROR_THROTTLE(
-                1.0, "[UnicycleUgvController] Reset holding with no target (topic=/command "
-                     "CONTROL=Reset reject=missing-initialPose)");
+                1.0,
+                "[UnicycleUgvController] Reset holding with no target (topic=/command "
+                "CONTROL=Reset reject=missing-initialPose)");
             return {};
         }
     }

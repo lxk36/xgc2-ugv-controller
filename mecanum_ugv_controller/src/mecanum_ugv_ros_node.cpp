@@ -46,8 +46,8 @@ class MecanumUgvRosNode {
         control_state_pub_ = nh_.advertise<std_msgs::String>(control_state_topic_, queue_size_);
         namespaced_command_sub_ = nh_.subscribe(
             "command", queue_size_, &MecanumUgvRosNode::namespacedCommandCallback, this);
-        command_sub_ = nh_.subscribe("/command", queue_size_,
-                                     &MecanumUgvRosNode::publicCommandCallback, this);
+        command_sub_ =
+            nh_.subscribe("/command", queue_size_, &MecanumUgvRosNode::publicCommandCallback, this);
         pose_sub_ = nh_.subscribe(pose_topic_, queue_size_, &MecanumUgvRosNode::poseCallback, this);
         reset_pose_sub_ = nh_.subscribe(reset_pose_topic_, queue_size_,
                                         &MecanumUgvRosNode::resetPoseCallback, this);

@@ -21,10 +21,10 @@ std::string normalize(std::string value) {
 CommandInputProducer::CommandInputProducer(ros::NodeHandle& nh, EventSink event_sink,
                                            uint32_t queue_size)
     : event_sink_(std::move(event_sink)) {
-    namespaced_command_sub_ = nh.subscribe(
-        "command", queue_size, &CommandInputProducer::namespacedCommandCallback, this);
-    command_sub_ = nh.subscribe("/command", queue_size,
-                                &CommandInputProducer::publicCommandCallback, this);
+    namespaced_command_sub_ =
+        nh.subscribe("command", queue_size, &CommandInputProducer::namespacedCommandCallback, this);
+    command_sub_ =
+        nh.subscribe("/command", queue_size, &CommandInputProducer::publicCommandCallback, this);
 }
 
 void CommandInputProducer::namespacedCommandCallback(const std_msgs::String::ConstPtr& msg) {
@@ -44,8 +44,8 @@ void CommandInputProducer::handleCommand(const std_msgs::String::ConstPtr& msg,
     const std::string command = normalize(msg->data);
     if (command == "track" || command == "tracking" || command == "custom" ||
         command == "custom1" || command == "start") {
-        ROS_INFO("[UgvCommandInputProducer] Accepted Custom1 command: %s on %s",
-                 msg->data.c_str(), source);
+        ROS_INFO("[UgvCommandInputProducer] Accepted Custom1 command: %s on %s", msg->data.c_str(),
+                 source);
         post(event_type::CUSTOM1_REQUESTED, source);
     } else if (command == "hold" || command == "stop") {
         ROS_INFO("[UgvCommandInputProducer] Accepted stop command: %s on %s", msg->data.c_str(),

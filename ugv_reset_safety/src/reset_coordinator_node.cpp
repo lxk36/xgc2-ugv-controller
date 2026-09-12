@@ -611,8 +611,7 @@ class Coordinator {
                 completed_[i] = true;
                 reply(e, ResetResponse::ARRIVED, Eigen::Vector3d::Zero(), "");
             } else if (!robots[i].local_plan_feasible) {
-                reply(e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
-                      "no feasible DWA sample");
+                reply(e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(), "no feasible DWA sample");
             } else {
                 reply(e, ResetResponse::RUNNING, robots[i].nominal, "");
             }

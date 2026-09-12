@@ -51,10 +51,9 @@ void MecanumUgvController::update(double now_sec) {
     auto status = machine_->postEvent(std::move(event));
     if (id == event_type::RESET_REQUESTED && !status.ok()) {
         pending_reset_requested_ = false;
-        last_reset_admission_miss_ =
-            std::string("Failed to post command event: ") + status.message +
-            " source=" + pending_reset_source_ +
-            " CONTROL=" + machine_->currentStateName(region_type::CONTROL);
+        last_reset_admission_miss_ = std::string("Failed to post command event: ") +
+                                     status.message + " source=" + pending_reset_source_ +
+                                     " CONTROL=" + machine_->currentStateName(region_type::CONTROL);
         ROS_ERROR("[MecanumUgvController] %s", last_reset_admission_miss_.c_str());
     }
     return status;
