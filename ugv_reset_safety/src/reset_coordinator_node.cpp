@@ -68,7 +68,6 @@ class Coordinator {
         ros::WallTime request_wall, pose_wall, state_wall;
         ros::Time pose_stamp;
         Eigen::Vector2d measured_position = Eigen::Vector2d::Zero();
-        Eigen::Vector2d measured_velocity = Eigen::Vector2d::Zero();
         double measured_yaw = 0, measured_speed = 0, measured_omega = 0;
         bool have_pose = false, have_request = false, have_generation = false, planned = false,
              rejected = false;
@@ -250,8 +249,8 @@ class Coordinator {
                 if (dt <= 0) {
                     return;
                 }
-                e.measured_velocity = (position - e.measured_position) / dt;
-                e.measured_speed = dt <= timeout_ ? e.measured_velocity.norm() : 1e9;
+                e.measured_speed =
+                    dt <= timeout_ ? (position - e.measured_position).norm() / dt : 1e9;
                 e.measured_omega = dt > timeout_ ? 1e9
                                                  : std::atan2(std::sin(heading - e.measured_yaw),
                                                               std::cos(heading - e.measured_yaw)) /

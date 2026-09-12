@@ -303,8 +303,11 @@ double ResetPath::unicycleGoalCost(const Robot& robot, double lateral_offset) co
     // max_vx to keep the path score in length units. This ratio converts units;
     // it is not a minimum turning radius. DWA still chooses every command.
     const double turn_length = robot.limits.max_vx / robot.limits.max_omega;
+    if (reached(robot)) {
+        return delta.norm();
+    }
     if (delta.norm() <= options_.position_tolerance) {
-        return turn_length * std::abs(wrap(target_.yaw - robot.yaw));
+        return delta.norm() + turn_length * std::abs(wrap(target_.yaw - robot.yaw));
     }
     const double bearing = std::atan2(delta.y(), delta.x());
     double turning = std::numeric_limits<double>::infinity();
@@ -312,7 +315,7 @@ double ResetPath::unicycleGoalCost(const Robot& robot, double lateral_offset) co
         turning = std::min(
             turning, std::abs(wrap(heading - robot.yaw)) + std::abs(wrap(target_.yaw - heading)));
     }
-    return delta.norm() - options_.position_tolerance + turn_length * turning;
+    return delta.norm() + turn_length * turning;
 }
 
 void ResetPath::clear() {
