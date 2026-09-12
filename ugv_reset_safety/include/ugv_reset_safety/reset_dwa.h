@@ -636,6 +636,10 @@ class ResetDwa {
     }
 
    public:
+    static constexpr double predictionHorizon() {
+        return kRolloutHorizon;
+    }
+
     void clear() {
         priority_cursor_ = 0;
         observations_.clear();
