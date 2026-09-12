@@ -397,7 +397,7 @@ std::vector<ResetPath> planPeerPaths(const std::vector<Robot>& robots,
         }
         auto occupancy = obstacles;
         for (std::size_t j = 0; j < robots.size(); ++j) {
-            if (i == j || !robots[j].active || robots[j].stop_requested) {
+            if (i == j) {
                 continue;
             }
             const auto& peer = robots[j];
@@ -405,14 +405,14 @@ std::vector<ResetPath> planPeerPaths(const std::vector<Robot>& robots,
                                   self.body_center_offset.norm() +
                                   std::hypot(peer.half_length, peer.half_width) +
                                   peer.body_center_offset.norm() + paths[i].planningClearance();
-            // A moving participant can occupy this session's original target.
-            // Such occupancy is transient; it remains a hard DWA constraint.
+            // Nearby peers may not fit the conservative path inflation.
+            // Active and arrived peers keep the same hard DWA body constraints.
             if ((peer.position - paths[i].target().position).norm() <= radius ||
                 (peer.position - self.position).norm() <= radius) {
                 continue;
             }
             ConvexObstacle body;
-            body.id = "moving_peer/" + peer.id;
+            body.id = "fleet_peer/" + peer.id;
             Eigen::Matrix2d rotation;
             rotation << std::cos(peer.yaw), -std::sin(peer.yaw), std::sin(peer.yaw),
                 std::cos(peer.yaw);

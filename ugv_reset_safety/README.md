@@ -61,13 +61,15 @@ Native Reset has a fixed 90 s timeout, including the production Scout launch.
 The per-cycle solve deadline is separate. The 45 s mathematical regression
 scenarios remain a stricter convergence check, not the runtime timeout.
 
-`planPeerPaths` recomputes complete routes around current moving-peer footprints
+`planPeerPaths` recomputes complete routes around current fleet footprints
 to the unchanged original targets. Transient target occupancy and close poses
 that cannot fit the conservative planning inflation remain DWA constraints.
 If no extra peer detour fits, the valid scene route remains the geometric
 reference; DWA must still find an admissible command. Equal-length detours
 prefer the robot's right. Relative-velocity heading scoring in DWA supports
-crossing traffic without storing passage targets. There is no polar velocity
+crossing traffic without storing passage targets. Arrival only stops that owner:
+the frozen cohort, other routes, and learned motion stay intact. Arrived peers
+keep the same body collision checks at zero velocity. There is no polar velocity
 law, common time scaling, CBF-QP, or Reset OSQP dependency.
 
 ## Scene and admissibility

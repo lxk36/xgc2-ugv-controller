@@ -164,7 +164,7 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
     ResetDwa dwa;
     FleetSchedule schedule(config.clearance + config.uncertainty_margin);
     std::vector<bool> completed(robots.size(), false), selected(robots.size(), false);
-    std::vector<ConvexObstacle> path_obstacles = obstacles;
+    const auto& path_obstacles = obstacles;
     std::ofstream trace;
     if (!trace_file.empty()) {
         trace.open(trace_file);
@@ -226,12 +226,11 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
         }
         if (next_selected != selected) {
             selected = next_selected;
-            dwa.clear();
-            path_obstacles = obstacles;
-            const auto parked = parkedPeerObstacles(robots, selected);
-            path_obstacles.insert(path_obstacles.end(), parked.begin(), parked.end());
             for (std::size_t i = 0; i < robots.size(); ++i) {
                 if (!selected[i]) {
+                    continue;
+                }
+                if (!paths[i].path().empty()) {
                     continue;
                 }
                 const auto status =

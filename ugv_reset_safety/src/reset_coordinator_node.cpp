@@ -212,7 +212,6 @@ class Coordinator {
             schedule_ready_ = false;
             schedule_.clear();
             scheduled_requested_.clear();
-            selected_.clear();
             completed_.assign(entries_.size(), false);
             // Every new owner generation reopens admission. Stored requests
             // from a previous Reset must not suppress the next batch window.
@@ -440,8 +439,9 @@ class Coordinator {
                     e->have_request && (wall - e->request_wall).toSec() <= timeout_;
                 return fresh_request != (e->state == "Reset");
             });
-        if ((wall - last_admission_).toSec() < timeout_ ||
-            (awaiting_state && (wall - last_admission_).toSec() < state_timeout_)) {
+        if (!schedule_ready_ &&
+            ((wall - last_admission_).toSec() < timeout_ ||
+             (awaiting_state && (wall - last_admission_).toSec() < state_timeout_))) {
             for (auto& e : entries_) {
                 if (e->robot.active) {
                     reply(*e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
@@ -514,7 +514,6 @@ class Coordinator {
             }
             scheduled_requested_ = requested;
             completed_.assign(robots.size(), false);
-            selected_.assign(robots.size(), false);
             schedule_ready_ = true;
         }
         for (std::size_t i = 0; i < robots.size(); ++i) {
@@ -538,16 +537,10 @@ class Coordinator {
         for (const auto i : group.selected) {
             selected[i] = true;
         }
-        if (selected != selected_) {
-            selected_ = selected;
-            dwa_.clear();
-            for (auto& e : entries_) {
-                e->planned = false;
-            }
-        }
-        auto path_obstacles = occupancy_.empty() ? obstacles_ : occupancy_;
-        const auto parked = parkedPeerObstacles(robots, selected);
-        path_obstacles.insert(path_obstacles.end(), parked.begin(), parked.end());
+        // Completion changes a peer's command to zero, not its geometry or
+        // anyone else's admission. All fleet bodies remain DWA constraints.
+        // Static scene routes and learned motion survive another owner arriving.
+        const auto& path_obstacles = occupancy_.empty() ? obstacles_ : occupancy_;
         std::vector<ResetPath> paths(robots.size());
         for (std::size_t i = 0; i < robots.size(); ++i) {
             auto& e = *entries_[i];
@@ -631,7 +624,7 @@ class Coordinator {
     ResetDwa dwa_;
     FleetSchedule schedule_;
     bool schedule_ready_ = false;
-    std::vector<bool> scheduled_requested_, selected_, completed_;
+    std::vector<bool> scheduled_requested_, completed_;
     ros::WallTime last_admission_;
     double frequency_ = 50, timeout_ = .15, state_timeout_ = 1.0;
     uint32_t consumer_generation_ = 1;
