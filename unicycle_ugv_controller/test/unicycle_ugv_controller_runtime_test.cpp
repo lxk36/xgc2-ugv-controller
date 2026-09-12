@@ -369,6 +369,124 @@ TEST(UnicycleLaw, FlatnessRejectsInvalidDt) {
     EXPECT_FALSE(computeFlatnessCommand(state, reference, 0.2, 0.0, ControllerConfig{}).valid);
 }
 
+TEST(UnicycleSm, MissingCustom1ReferencePublishesIdleZeroAtFiveHz) {
+    ros::Time::init();
+    for (const auto strategy : {TrackingStrategy::FLATNESS, TrackingStrategy::NMPC}) {
+        UgvState state;
+        UnicycleUgvController controller(state);
+        auto cfg = controller.config();
+        cfg.tracking_strategy = strategy;
+        controller.setConfig(cfg);
+        goReadyPose(controller, state, 1.0);
+        postCommand(controller, event_type::CUSTOM1_REQUESTED, 1.01);
+        controller.update(1.01);
+        ASSERT_EQ(controller.stateMachine().currentState(region_type::CONTROL),
+                  state_type::Custom1);
+
+        int zero_count = 0;
+        for (int tick = 0; tick < 1000; ++tick) {
+            const double now = 1.012 + tick * 0.002;
+            setPose(state, now, 0.0, 0.0, 0.0);
+            controller.update(now);
+            zero_count += hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL);
+            ASSERT_FALSE(hasOutputEvent(controller, output_event_type::PUBLISH_CMD_VEL));
+        }
+        EXPECT_GE(zero_count, 9);
+        EXPECT_LE(zero_count, 10);
+    }
+}
+
+TEST(UnicycleSm, FlatnessPublishesThirtyHzAndStopsImmediatelyWhenReferenceIsLost) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    auto cfg = controller.config();
+    cfg.tracking_strategy = TrackingStrategy::FLATNESS;
+    controller.setConfig(cfg);
+    goReadyPose(controller, state, 1.0);
+    postCommand(controller, event_type::CUSTOM1_REQUESTED, 1.01);
+    controller.update(1.01);
+    controller.update(1.012);
+    ASSERT_FALSE(controller.command().valid);
+
+    WorldPvaReference reference;
+    reference.valid = true;
+    reference.x = 0.1;
+    reference.vx = 0.3;
+    controller.setWorldPva(reference);
+    setPose(state, 1.014, 0.0, 0.0, 0.0);
+    controller.update(1.014);
+    ASSERT_TRUE(hasOutputEvent(controller, output_event_type::PUBLISH_CMD_VEL));
+    ASSERT_GT(controller.command().linear_speed, 0.0);
+
+    // A stop must bypass the recent idle and driving publication deadlines.
+    controller.setWorldPva(WorldPvaReference{});
+    controller.update(1.016);
+    EXPECT_TRUE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
+    EXPECT_FALSE(controller.command().valid);
+    int zero_count = 0;
+    for (int tick = 0; tick < 100; ++tick) {
+        const double now = 1.018 + tick * 0.002;
+        setPose(state, now, 0.0, 0.0, 0.0);
+        controller.update(now);
+        zero_count += hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL);
+    }
+    EXPECT_LE(zero_count, 1);
+
+    // Recovery uses the same output cadence as an uninterrupted healthy run.
+    controller.setWorldPva(reference);
+    // The first computation after a long gap re-establishes a valid dt.
+    setPose(state, 1.217, 0.0, 0.0, 0.0);
+    controller.update(1.217);
+    int command_count = 0;
+    for (int tick = 0; tick < 1000; ++tick) {
+        const double now = 1.218 + tick * 0.002;
+        setPose(state, now, 0.0, 0.0, 0.0);
+        controller.update(now);
+        command_count += hasOutputEvent(controller, output_event_type::PUBLISH_CMD_VEL);
+        ASSERT_FALSE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
+    }
+    EXPECT_GE(command_count, 59);
+    EXPECT_LE(command_count, 61);
+    postCommand(controller, event_type::STOP_REQUESTED, 3.217);
+    controller.update(3.217);
+    EXPECT_TRUE(hasOutputEvent(controller, output_event_type::PUBLISH_ZERO_CMD_VEL));
+    EXPECT_FALSE(controller.command().valid);
+}
+
+TEST(UnicycleSm, RepeatedNmpcFailuresKeepIdlePublicationCadence) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    makeCustom1Ready(controller, state);
+    uint64_t pending_sequence = 0U;
+    int zero_count = 0;
+    int failure_count = 0;
+    for (int tick = 0; tick < 1000; ++tick) {
+        const double now = 1.012 + tick * 0.002;
+        state.stamp = ros::Time(now);
+        if (pending_sequence != 0U) {
+            ::state_machine::Event failure(event_type::INPUT_NMPC_SOLVE_FAILED,
+                                           ::state_machine::EventTimestamp{now});
+            failure.correlation_id = pending_sequence;
+            ASSERT_TRUE(controller.postEvent(std::move(failure)).ok());
+            pending_sequence = 0U;
+            ++failure_count;
+        }
+        controller.update(now);
+        for (const auto& event : controller.stateMachine().currentOutputEvents()) {
+            if (event.id == output_event_type::REQUEST_NMPC_SOLVE) {
+                pending_sequence = event.correlation_id;
+            }
+            zero_count += event.id == output_event_type::PUBLISH_ZERO_CMD_VEL;
+            ASSERT_NE(event.id, output_event_type::PUBLISH_CMD_VEL);
+        }
+    }
+    EXPECT_GT(failure_count, 100);
+    EXPECT_GE(zero_count, 9);
+    EXPECT_LE(zero_count, 10);
+}
+
 TEST(UnicycleLaw, PvaDoesNotValidateAlgorithmTimestamp) {
     WorldPvaReference reference;
     reference.valid = true;

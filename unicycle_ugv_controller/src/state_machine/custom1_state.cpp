@@ -16,6 +16,7 @@ Custom1State::Custom1State(UnicycleUgvController& controller) : controller_(cont
     controller_.clearCommand();
     solve_gate_.reset();
     command_gate_.reset();
+    zero_gate_.reset();
     // Request IDs belong to this State instance, not one Custom1 activation.
     // Reusing them would let an old worker result authorize a new session.
     in_flight_sequence_ = 0U;
@@ -156,10 +157,7 @@ void Custom1State::publishNmpcCommandIfDue(::state_machine::StateContext& ctx) {
     if (hasCommand()) {
         emitCommandIfDue(ctx);
     } else {
-        const auto cfg = controller_.config();
-        if (command_gate_.due(controller_.currentTime(), 1.0 / cfg.command_publish_rate_hz)) {
-            emitZero(ctx);
-        }
+        emitZero(ctx);
     }
 }
 
@@ -168,6 +166,10 @@ bool Custom1State::hasCommand() const {
 }
 
 void Custom1State::emitCommandIfDue(::state_machine::StateContext& ctx) {
+    if (!hasCommand()) {
+        emitZero(ctx);
+        return;
+    }
     const auto cfg = controller_.config();
     if (!command_gate_.due(controller_.currentTime(), 1.0 / cfg.command_publish_rate_hz)) {
         return;
@@ -177,17 +179,28 @@ void Custom1State::emitCommandIfDue(::state_machine::StateContext& ctx) {
                                ::state_machine::EventTimestamp{controller_.currentTime()}));
 }
 
-void Custom1State::emitZero(::state_machine::StateContext& ctx) {
+void Custom1State::emitZero(::state_machine::StateContext& ctx, bool force) {
+    // Stop immediately when losing a command, then keep publishing idle zeros
+    // at their own cadence. Missing references and failed results may reach
+    // this path on every event-pump tick; they must not bypass the output gate.
+    if (force || controller_.command().valid) {
+        zero_gate_.reset();
+    }
     controller_.clearCommand();
+    const auto cfg = controller_.config();
+    if (!zero_gate_.due(controller_.currentTime(), 1.0 / cfg.idle_cmd_rate_hz)) {
+        return;
+    }
     ctx.emitOutput(
         ::state_machine::Event(output_event_type::PUBLISH_ZERO_CMD_VEL,
                                ::state_machine::EventTimestamp{controller_.currentTime()}));
 }
 
 ::state_machine::ActionResult Custom1State::onExit(::state_machine::StateContext& ctx) {
-    emitZero(ctx);
+    emitZero(ctx, true);
     solve_gate_.reset();
     command_gate_.reset();
+    zero_gate_.reset();
     request_in_flight_ = false;
     have_tick_time_ = false;
     return {};

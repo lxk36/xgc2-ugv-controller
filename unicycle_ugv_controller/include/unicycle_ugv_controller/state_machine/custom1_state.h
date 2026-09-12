@@ -28,11 +28,12 @@ class Custom1State final : public ::state_machine::State {
     void tickFlatness(::state_machine::StateContext& ctx);
     bool hasCommand() const;
     void emitCommandIfDue(::state_machine::StateContext& ctx);
-    void emitZero(::state_machine::StateContext& ctx);
+    void emitZero(::state_machine::StateContext& ctx, bool force = false);
 
     UnicycleUgvController& controller_;
     PeriodicGate solve_gate_;
     PeriodicGate command_gate_;
+    PeriodicGate zero_gate_;
     uint64_t request_sequence_{0U};
     uint64_t in_flight_sequence_{0U};
     bool request_in_flight_{false};
