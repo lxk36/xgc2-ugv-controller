@@ -1,0 +1,16 @@
+<launch>
+  <param name="/use_sim_time" value="false"/>
+  <include file="$(find unicycle_ugv_controller)/launch/ugv_unicycle_nmpc_controller.launch">
+    <arg name="ns" value="ugv_test"/>
+    <arg name="state_source" value="platform_pose"/>
+    <arg name="tracking_strategy" value="flatness"/>
+    <arg name="control_rate_hz" value="100.0"/>
+    <arg name="command_publish_rate_hz" value="50.0"/>
+    <arg name="idle_cmd_rate_hz" value="5.0"/>
+    <arg name="state_timeout" value="0.2"/>
+    <arg name="reset_initial_x" value="1.25"/>
+    <arg name="reset_initial_y" value="-0.4"/>
+    <arg name="reset_initial_yaw" value="0.3"/>
+  </include>
+  <test test-name="unicycle_ugv_slot_initial_pose_reset_test" pkg="unicycle_ugv_controller" type="unicycle_ugv_slot_initial_pose_reset_test" time-limit="30.0"/>
+</launch>

@@ -48,6 +48,7 @@
   <depend>ugv_reset_safety</depend>
 
   <test_depend>gtest</test_depend>
+  <test_depend>rostest</test_depend>
 
   <export>
     <build_type>catkin</build_type>

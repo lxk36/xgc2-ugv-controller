@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="scenario_dir" default="$(find formation_generator)/config/scenarios/ugv4_scout_eight"/>
+    <arg name="node_output" default="screen"/>
+    <node name="xgc_world_to_map" pkg="tf2_ros" type="static_transform_publisher"
+          args="0 0 0 0 0 0 world map" output="$(arg node_output)"/>
+    <node name="formation_mission_clock" pkg="formation_generator"
+          type="formation_mission_clock.py" required="true" output="$(arg node_output)">
+        <rosparam param="robots">["ugv1", "ugv2", "ugv3", "ugv4"]</rosparam>
+        <rosparam param="ground_robots">["ugv1", "ugv2", "ugv3", "ugv4"]</rosparam>
+    </node>
+    <group>
+        <remap from="/formation/leader_reference_path" to="/xgc/user/leader_reference_path"/>
+        <remap from="/formation/leader_marker" to="/xgc/user/leader_marker"/>
+        <remap from="/formation/convex_feasible_region_markers" to="/xgc/user/formation_markers"/>
+        <include file="$(find formation_generator)/launch/swarm_algo/algo_ugv_swarm.launch">
+            <arg name="num_ugvs" value="4"/>
+            <arg name="fleet_mission_clock" value="true"/>
+            <arg name="scenario_dir" value="$(arg scenario_dir)"/>
+            <arg name="node_output" value="$(arg node_output)"/>
+            <arg name="continuous_distance_monitor" value="true"/>
+            <arg name="launch_analysis" value="true"/>
+            <arg name="global_formation_visualizer" value="false"/>
+        </include>
+    </group>
+</launch>

@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <limits>
 #include <random>
+#include <string>
 #include <utility>
 
 #include "unicycle_ugv_controller/common/reference_cache.h"
@@ -200,6 +202,21 @@ TEST(UnicycleSm, Custom1StopReturnsReady) {
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Ready);
 }
 
+TEST(UnicycleSm, Custom1CanReset) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    makeCustom1Ready(controller, state);
+    ResetTarget goal;
+    goal.x = 1.0;
+    goal.valid = true;
+    controller.setResetTarget(goal);
+    postCommand(controller, event_type::RESET_REQUESTED, 1.02);
+    state.stamp = ros::Time(1.02);
+    controller.update(1.02);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+}
+
 TEST(UnicycleSm, SelfCheckDoesNotJumpToCustom1OrReset) {
     ros::Time::init();
     UgvState state;
@@ -212,6 +229,29 @@ TEST(UnicycleSm, SelfCheckDoesNotJumpToCustom1OrReset) {
     postCommand(controller, event_type::RESET_REQUESTED, 1.02);
     controller.update(1.02);
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::SelfCheck);
+    EXPECT_NE(controller.lastResetAdmissionMiss().find("RESET_REQUESTED unmatched"),
+              std::string::npos);
+    EXPECT_NE(controller.lastResetAdmissionMiss().find("CONTROL=SelfCheck"), std::string::npos);
+    EXPECT_NE(controller.lastResetAdmissionMiss().find("unhealthy-SelfCheck-has-no-Reset-edge"),
+              std::string::npos);
+    std::cout << controller.lastResetAdmissionMiss() << std::endl;
+}
+
+TEST(UnicycleSm, ResetWithoutTargetStaysResetAndLogs) {
+    ros::Time::init();
+    UgvState state;
+    UnicycleUgvController controller(state);
+    goReadyPose(controller, state, 1.0);
+    EXPECT_FALSE(controller.resetTargetReady());
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    controller.update(1.02);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    EXPECT_FALSE(controller.resetSession().active());
+    EXPECT_NE(controller.lastResetHoldReason().find("no target"), std::string::npos);
+    std::cout << controller.lastResetHoldReason() << std::endl;
 }
 
 TEST(UnicycleSm, HoldStateIdIsGone) {

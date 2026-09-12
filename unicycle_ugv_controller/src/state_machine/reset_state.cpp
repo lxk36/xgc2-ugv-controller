@@ -1,5 +1,7 @@
 #include "unicycle_ugv_controller/state_machine/reset_state.h"
 
+#include <ros/console.h>
+
 #include <cmath>
 
 #include "unicycle_ugv_controller/common/types.h"
@@ -17,6 +19,12 @@ ResetState::ResetState(UnicycleUgvController& controller) : controller_(controll
     const auto target = controller_.resetTarget();
     if (controller_.resetTargetReady()) {
         controller_.resetSession().begin({target.x, target.y, target.yaw});
+        controller_.setResetHoldReason({});
+    } else {
+        controller_.setResetHoldReason(
+            "no target: reset_pose cache and reset_initial_* missing");
+        ROS_ERROR("[UnicycleUgvController] Reset entered without a valid goal; "
+                  "holding Reset until timeout/Stop or a cached initialPose");
     }
     emitZero(ctx);
     return {};
@@ -37,9 +45,17 @@ ResetState::ResetState(UnicycleUgvController& controller) : controller_(controll
         return {};
     }
     if (!controller_.resetSession().active()) {
-        emitZero(ctx);
-        postDone(ctx, event_type::RESET_REJECTED);
-        return {};
+        if (controller_.resetTargetReady()) {
+            const auto target = controller_.resetTarget();
+            controller_.resetSession().begin({target.x, target.y, target.yaw});
+            controller_.setResetHoldReason({});
+        } else {
+            emitZero(ctx);
+            ROS_ERROR_THROTTLE(
+                1.0, "[UnicycleUgvController] Reset holding with no target (topic=/command "
+                     "CONTROL=Reset reject=missing-initialPose)");
+            return {};
+        }
     }
     const auto feedback = controller_.resetSession().feedback(ros::Time(now).toNSec(), wall);
     if (feedback.valid && feedback.status != ugv_reset_safety::ResetSession::RUNNING) {
@@ -53,8 +69,7 @@ ResetState::ResetState(UnicycleUgvController& controller) : controller_(controll
     command.stamp = ros::Time(now);
     command.valid = true;
     if (feedback.valid) {
-        // Safety inputs are solved jointly. Refuse an invalid contract; do not
-        // apply post-QP saturation, which would invalidate the safe solution.
+        // Refuse a command outside chassis limits; do not silently saturate.
         if (std::abs(feedback.command.x) > cfg.chassis_max_linear_speed ||
             feedback.command.y != 0.0 ||
             std::abs(feedback.command.yaw) > cfg.chassis_max_yaw_rate) {

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <ugv_reset_safety/fleet_guidance.h>
 #include <ugv_reset_safety/reset_guidance.h>
 
 #include <cmath>
@@ -22,6 +23,7 @@ TEST(ResetClosedLoop, SingleRobotWithObstacle) {
         std::vector<ConvexObstacle> obstacles{
             {"box", {{-.3, -.35}, {.3, -.35}, {.3, .35}, {-.3, .35}}}};
         ResetGuidance guidance;
+        FleetGuidance passing;
         ResetTarget target;
         target.position = {2, 0};
         target.yaw = 0;
@@ -35,11 +37,13 @@ TEST(ResetClosedLoop, SingleRobotWithObstacle) {
         for (int i = 0; i < 6000; ++i) {
             auto g = guidance.step(robot);
             robot.nominal = g.nominal;
-            auto result = solveSafetyFilter({robot}, obstacles, fence, cfg);
-            ASSERT_TRUE(result.ok()) << "step " << i << ": " << result.detail;
-            ASSERT_GE(result.min_clearance, -1e-6);
-            const auto u = result.commands[0];
+            robot.active = true;
+            std::vector<Robot> robots{robot};
+            passing.apply(robots, obstacles, fence, cfg);
+            ASSERT_TRUE(robots[0].local_plan_feasible) << "step " << i;
+            const auto u = robots[0].nominal;
             EXPECT_LE((u - robot.previous).cwiseAbs().maxCoeff(), .02 * .8 + 1e-5);
+            robot = robots[0];
             robot.previous = u;
             const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
             robot.position += .02 * Eigen::Vector2d(c * u.x() - s * u.y(), s * u.x() + c * u.y());
@@ -52,4 +56,31 @@ TEST(ResetClosedLoop, SingleRobotWithObstacle) {
         EXPECT_TRUE(arrived) << "type " << static_cast<int>(type) << " residual "
                              << (robot.position - target.position).norm();
     }
+}
+
+TEST(FleetGuidance, BlockedSampleIsFailClosedZero) {
+    Robot robot;
+    robot.id = "ugv1";
+    robot.active = true;
+    robot.position = {0.0, 0.0};
+    robot.previous = {0.2, 0.0, 0.0};
+    robot.half_length = 0.25;
+    robot.half_width = 0.2;
+    robot.limits.max_vx = 0.35;
+    robot.limits.max_vy = 0.35;
+    robot.limits.max_omega = 0.7;
+    robot.nominal = {0.2, 0.0, 0.0};
+    Fence fence;
+    fence.xmin = -5;
+    fence.xmax = 5;
+    fence.ymin = -5;
+    fence.ymax = 5;
+    ConvexObstacle box{"box", {{-0.05, -0.05}, {0.05, -0.05}, {0.05, 0.05}, {-0.05, 0.05}}};
+    FilterConfig cfg;
+    cfg.dt = 0.02;
+    FleetGuidance passing;
+    std::vector<Robot> robots{robot};
+    passing.apply(robots, {box}, fence, cfg);
+    EXPECT_FALSE(robots[0].local_plan_feasible);
+    EXPECT_TRUE(robots[0].nominal.isZero(1.0e-12));
 }

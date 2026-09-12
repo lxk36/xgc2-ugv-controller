@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <state_machine/state_machine.hpp>
+#include <string>
 
 #include "mecanum_ugv_controller/common/types.h"
 
@@ -42,10 +43,19 @@ class MecanumUgvController {
     const ugv_reset_safety::ResetSession& resetSession() const {
         return reset_session_;
     }
+    const std::string& lastResetAdmissionMiss() const {
+        return last_reset_admission_miss_;
+    }
+    const std::string& lastResetHoldReason() const {
+        return last_reset_hold_reason_;
+    }
+    void setResetHoldReason(std::string reason);
 
    private:
     void setupMachine();
     void maybeAutoStartCustom1();
+    void noteResetAdmissionAfterUpdate();
+    std::string describeResetAdmissionMiss(const std::string& source) const;
 
     ugv_reset_safety::ResetSession reset_session_;
     const UgvState& state_;
@@ -59,6 +69,10 @@ class MecanumUgvController {
     WorldVelocityReference world_reference_;
     std::unique_ptr<::state_machine::StateMachine> machine_;
     double current_time_sec_{0.0};
+    bool pending_reset_requested_{false};
+    std::string pending_reset_source_;
+    std::string last_reset_admission_miss_;
+    std::string last_reset_hold_reason_;
 };
 
 }  // namespace mecanum_ugv_controller

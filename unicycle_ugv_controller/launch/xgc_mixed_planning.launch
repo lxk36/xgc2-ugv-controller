@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="scenario_dir" default="$(find formation_generator)/config/scenarios/uav5_ugv4_circle"/>
+  <arg name="node_output" default="screen"/>
+  <node name="xgc_world_to_map" pkg="tf2_ros" type="static_transform_publisher" args="0 0 0 0 0 0 world map"/>
+  <node name="formation_mission_clock" pkg="formation_generator" type="formation_mission_clock.py" required="true" output="$(arg node_output)">
+    <rosparam param="robots">[uav1, uav2, uav3, uav4, uav5, ugv1, ugv2, ugv3, ugv4]</rosparam>
+    <rosparam param="ground_robots">[ugv1, ugv2, ugv3, ugv4]</rosparam>
+    <param name="duration" value="62.83185307179586"/>
+  </node>
+  <node name="sync_coordinator" pkg="periodic_sync" type="sync_coordinator" required="true" output="$(arg node_output)">
+    <rosparam command="load" file="$(arg scenario_dir)/scenario.yaml"/>
+    <param name="participant_count" value="9" type="int"/>
+    <param name="first_participant_id" value="1" type="int"/>
+    <param name="num_uavs" value="9" type="int"/>
+    <param name="ready_topic" value="/formation/ready"/>
+    <param name="trigger_topic" value="/formation/sync_trigger"/>
+    <param name="ack_topic" value="/formation/sync_ack"/>
+    <param name="statistics_topic" value="/formation/sync_statistics"/>
+    <param name="events_topic" value="/formation/sync_events"/>
+  </node>
+  <group>
+    <remap from="/formation/leader_reference_path" to="/xgc/user/leader_reference_path"/>
+    <remap from="/formation/leader_marker" to="/xgc/user/leader_marker"/>
+    <remap from="/formation/convex_feasible_region_markers" to="/xgc/user/formation_markers"/>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="1"/><arg name="robot" value="uav1"/><arg name="class" value="uav"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="2"/><arg name="robot" value="uav2"/><arg name="class" value="uav"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="3"/><arg name="robot" value="uav3"/><arg name="class" value="uav"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="4"/><arg name="robot" value="uav4"/><arg name="class" value="uav"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="5"/><arg name="robot" value="uav5"/><arg name="class" value="uav"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="6"/><arg name="robot" value="ugv1"/><arg name="class" value="ugv"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="7"/><arg name="robot" value="ugv2"/><arg name="class" value="ugv"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="8"/><arg name="robot" value="ugv3"/><arg name="class" value="ugv"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+    <include file="$(find formation_generator)/launch/xgc_runtime/xgc_mixed_circle_agent.launch">
+      <arg name="id" value="9"/><arg name="robot" value="ugv4"/><arg name="class" value="ugv"/>
+      <arg name="scenario_dir" value="$(arg scenario_dir)"/><arg name="node_output" value="$(arg node_output)"/>
+    </include>
+  </group>
+  <node name="continuous_distance_monitor" pkg="formation_generator" type="continuous_distance_monitor" output="$(arg node_output)">
+    <rosparam command="load" file="$(arg scenario_dir)/scenario.yaml"/>
+    <param name="num_uavs" type="int" value="9"/>
+    <remap from="/uav6/mavros/local_position/pose" to="/ugv1/pose"/>
+    <remap from="/uav7/mavros/local_position/pose" to="/ugv2/pose"/>
+    <remap from="/uav8/mavros/local_position/pose" to="/ugv3/pose"/>
+    <remap from="/uav9/mavros/local_position/pose" to="/ugv4/pose"/>
+  </node>
+</launch>

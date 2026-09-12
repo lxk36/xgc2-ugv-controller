@@ -65,6 +65,7 @@ class UnicycleUgvRosNode {
     ros::Time last_status_stamp_;
     ::state_machine::StateId last_logged_control_state_{0U};
     ::state_machine::StateId last_logged_health_state_{0U};
+    std::string last_logged_reset_miss_;
 };
 
 }  // namespace unicycle_ugv_controller

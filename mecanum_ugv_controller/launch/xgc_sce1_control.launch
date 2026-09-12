@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="takeoff_altitude" default="1.0"/>
+    <arg name="ugv1_reset_initial_x" default=""/>
+    <arg name="ugv1_reset_initial_y" default=""/>
+    <arg name="ugv1_reset_initial_yaw" default=""/>
+    <arg name="ugv2_reset_initial_x" default=""/>
+    <arg name="ugv2_reset_initial_y" default=""/>
+    <arg name="ugv2_reset_initial_yaw" default=""/>
+    <include file="$(find mecanum_ugv_controller)/launch/ugv_two_mecanum_controllers.launch">
+        <arg name="ugv1_reset_initial_x" value="$(arg ugv1_reset_initial_x)"/>
+        <arg name="ugv1_reset_initial_y" value="$(arg ugv1_reset_initial_y)"/>
+        <arg name="ugv1_reset_initial_yaw" value="$(arg ugv1_reset_initial_yaw)"/>
+        <arg name="ugv2_reset_initial_x" value="$(arg ugv2_reset_initial_x)"/>
+        <arg name="ugv2_reset_initial_y" value="$(arg ugv2_reset_initial_y)"/>
+        <arg name="ugv2_reset_initial_yaw" value="$(arg ugv2_reset_initial_yaw)"/>
+    </include>
+    <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+        <arg name="ns" value="uav1"/><arg name="tracking_backend" value="px4_local"/>
+        <arg name="local_type_mask" value="3072"/><arg name="takeoff_altitude" value="$(arg takeoff_altitude)"/>
+    </include>
+    <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+        <arg name="ns" value="uav2"/><arg name="tracking_backend" value="px4_local"/>
+        <arg name="local_type_mask" value="3072"/><arg name="takeoff_altitude" value="$(arg takeoff_altitude)"/>
+    </include>
+    <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+        <arg name="ns" value="uav3"/><arg name="tracking_backend" value="px4_local"/>
+        <arg name="local_type_mask" value="3072"/><arg name="takeoff_altitude" value="$(arg takeoff_altitude)"/>
+    </include>
+    <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+        <arg name="ns" value="uav4"/><arg name="tracking_backend" value="px4_local"/>
+        <arg name="local_type_mask" value="3072"/><arg name="takeoff_altitude" value="$(arg takeoff_altitude)"/>
+    </include>
+    <include file="$(find px4_multirotor_controller)/launch/uav_nmpc_controller.launch">
+        <arg name="ns" value="uav5"/><arg name="tracking_backend" value="px4_local"/>
+        <arg name="local_type_mask" value="3072"/><arg name="takeoff_altitude" value="$(arg takeoff_altitude)"/>
+    </include>
+</launch>

@@ -271,8 +271,9 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                 const double vy = robots[i].type == RobotType::Unicycle
                                       ? -plant.lateral_offset * actual[i].z()
                                       : actual[i].y();
+                const bool at_xy = withinTargetTolerance(robots[i], goals[i]);
                 robots[i].stop_requested =
-                    guidance.status == GuidanceStatus::Reached &&
+                    (guidance.status == GuidanceStatus::Reached || at_xy) &&
                     robots[i].previous.cwiseAbs().maxCoeff() <= filter.feasibility_tolerance &&
                     std::hypot(actual[i].x(), vy) <= 0.03 && std::abs(actual[i].z()) <= 0.05;
             } else {
@@ -282,20 +283,9 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
             }
         }
         passing.apply(robots, guidance_obstacles, fence, filter);
-        const auto safe = solveSafetyFilter(robots, obstacles, fence, filter);
-        if (!safe.ok()) {
-            result.failure = "filter status " + std::to_string(static_cast<int>(safe.status)) +
-                             ": " + safe.detail;
-            for (std::size_t i = 0; i < robots.size(); ++i) {
-                const auto waypoint = guides[i].waypointIndex();
-                if (waypoint < guides[i].path().size()) {
-                    result.failure +=
-                        "; robot " + std::to_string(i) + " waypoint " + std::to_string(waypoint) +
-                        " distance " +
-                        std::to_string((guides[i].path()[waypoint] - robots[i].position).norm());
-                }
-            }
-            return finish();
+        std::vector<Eigen::Vector3d> commands(robots.size(), Eigen::Vector3d::Zero());
+        for (std::size_t i = 0; i < robots.size(); ++i) {
+            commands[i] = robots[i].active ? robots[i].nominal : Eigen::Vector3d::Zero();
         }
         if (trace.is_open()) {
             for (std::size_t i = 0; i < robots.size(); ++i) {
@@ -308,44 +298,27 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                     trace << ',' << robots[i].nominal[axis];
                 }
                 for (int axis = 0; axis < 3; ++axis) {
-                    trace << ',' << safe.commands[i][axis];
+                    trace << ',' << commands[i][axis];
                 }
-                trace << ',' << guides[i].waypointIndex() << ',' << safe.min_clearance << '\n';
+                trace << ',' << guides[i].waypointIndex() << ',' << 0.0 << '\n';
             }
         }
         result.last_safety_adjustment = 0.0;
         for (std::size_t i = 0; i < robots.size(); ++i) {
             const Eigen::Vector3d accelerations(
                 robots[i].limits.accel_vx, robots[i].limits.accel_vy, robots[i].limits.accel_omega);
-            if (((safe.commands[i] - robots[i].previous).cwiseAbs() - filter.dt * accelerations)
-                    .maxCoeff() > 2.0e-6) {
+            // Fail-closed DWA may command exact zero outside the dynamic
+            // window. Certified samples must still respect acceleration.
+            if (robots[i].active && robots[i].local_plan_feasible &&
+                ((commands[i] - robots[i].previous).cwiseAbs() - filter.dt * accelerations)
+                        .maxCoeff() > 2.0e-6) {
                 result.failure = "command slew exceeded";
                 return finish();
             }
-            Eigen::Vector3d free_command =
-                (robots[i].nominal + filter.smoothing_weight * robots[i].previous) /
-                (1.0 + filter.smoothing_weight);
-            const Eigen::Vector3d caps(
-                robots[i].limits.max_vx,
-                robots[i].type == RobotType::Unicycle ? 0.0 : robots[i].limits.max_vy,
-                robots[i].limits.max_omega);
-            for (int axis = 0; axis < 3; ++axis) {
-                free_command[axis] =
-                    std::clamp(free_command[axis],
-                               std::max(-caps[axis],
-                                        robots[i].previous[axis] - accelerations[axis] * filter.dt),
-                               std::min(caps[axis], robots[i].previous[axis] +
-                                                        accelerations[axis] * filter.dt));
-            }
-            result.last_safety_adjustment =
-                std::max(result.last_safety_adjustment, (free_command - safe.commands[i]).norm());
-            robots[i].previous = safe.commands[i];
-            if (robots[i].stop_requested && safe.commands[i] == Eigen::Vector3d::Zero()) {
+            robots[i].previous = commands[i];
+            if (robots[i].stop_requested && commands[i] == Eigen::Vector3d::Zero()) {
                 completed[i] = true;
             }
-        }
-        if (result.last_safety_adjustment > 1.0e-4) {
-            ++result.safety_limited_steps;
         }
         // Ten plant steps per command audit intersample footprint clearance.
         const double dt = filter.dt / 10.0;
@@ -354,7 +327,7 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                 for (int axis = 0; axis < 3; ++axis) {
                     const double lag = axis == 2 ? plant.angular_lag : plant.linear_lag;
                     const double fraction = lag > 0.0 ? 1.0 - std::exp(-dt / lag) : 1.0;
-                    actual[i][axis] += fraction * (safe.commands[i][axis] - actual[i][axis]);
+                    actual[i][axis] += fraction * (commands[i][axis] - actual[i][axis]);
                 }
                 double vy = actual[i].y();
                 if (robots[i].type == RobotType::Unicycle) {

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
+#include <string>
 
 #include "mecanum_ugv_controller/common/types.h"
 #include "mecanum_ugv_controller/mecanum_ugv_controller.h"
@@ -326,6 +328,29 @@ TEST(MecanumSm, SelfCheckDoesNotJumpToCustom1OrReset) {
     postCommand(controller, event_type::RESET_REQUESTED, 1.02);
     controller.update(1.02);
     EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::SelfCheck);
+    EXPECT_NE(controller.lastResetAdmissionMiss().find("RESET_REQUESTED unmatched"),
+              std::string::npos);
+    EXPECT_NE(controller.lastResetAdmissionMiss().find("CONTROL=SelfCheck"), std::string::npos);
+    EXPECT_NE(controller.lastResetAdmissionMiss().find("unhealthy-SelfCheck-has-no-Reset-edge"),
+              std::string::npos);
+    std::cout << controller.lastResetAdmissionMiss() << std::endl;
+}
+
+TEST(MecanumSm, ResetWithoutTargetStaysResetAndLogs) {
+    ros::Time::init();
+    UgvState state;
+    MecanumUgvController controller(state);
+    goReady(controller, state, 1.0);
+    EXPECT_FALSE(controller.resetTargetReady());
+    postCommand(controller, event_type::RESET_REQUESTED, 1.01);
+    setPose(state, 1.01, 0.0, 0.0, 0.0);
+    controller.update(1.01);
+    controller.update(1.012);
+    controller.update(1.02);
+    EXPECT_EQ(controller.stateMachine().currentState(region_type::CONTROL), state_type::Reset);
+    EXPECT_FALSE(controller.resetSession().active());
+    EXPECT_NE(controller.lastResetHoldReason().find("no target"), std::string::npos);
+    std::cout << controller.lastResetHoldReason() << std::endl;
 }
 
 TEST(MecanumLaw, IdealPlantCustom1HeadingAndWorldVelocity) {

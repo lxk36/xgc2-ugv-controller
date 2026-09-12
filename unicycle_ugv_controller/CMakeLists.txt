@@ -235,6 +235,23 @@ if(CATKIN_ENABLE_TESTING)
       ${catkin_LIBRARIES}
       gtest_main)
   endif()
+  find_package(rostest QUIET)
+  if(rostest_FOUND)
+    add_rostest_gtest(unicycle_ugv_public_command_reset_test
+      test/unicycle_ugv_public_command_reset.test
+      test/unicycle_ugv_public_command_reset_test.cpp)
+    if(TARGET unicycle_ugv_public_command_reset_test)
+      target_link_libraries(unicycle_ugv_public_command_reset_test ${catkin_LIBRARIES})
+      add_dependencies(unicycle_ugv_public_command_reset_test ${PROJECT_NAME}_node)
+    endif()
+    add_rostest_gtest(unicycle_ugv_slot_initial_pose_reset_test
+      test/unicycle_ugv_slot_initial_pose_reset.test
+      test/unicycle_ugv_slot_initial_pose_reset_test.cpp)
+    if(TARGET unicycle_ugv_slot_initial_pose_reset_test)
+      target_link_libraries(unicycle_ugv_slot_initial_pose_reset_test ${catkin_LIBRARIES})
+      add_dependencies(unicycle_ugv_slot_initial_pose_reset_test ${PROJECT_NAME}_node)
+    endif()
+  endif()
   find_program(PYTHON3_EXECUTABLE python3)
   if(PYTHON3_EXECUTABLE)
     add_test(NAME unicycle_tracker_python

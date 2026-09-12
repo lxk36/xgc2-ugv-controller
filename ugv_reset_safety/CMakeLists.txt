@@ -35,10 +35,20 @@ install(TARGETS ugv_reset_safety_math ugv_reset_coordinator_node
 install(DIRECTORY include/${PROJECT_NAME}/ DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
 install(DIRECTORY launch config DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 install(FILES README.md DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+catkin_install_python(PROGRAMS scripts/launch_control_with_slot_poses.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/reset_coordinator.test)
   add_rostest(test/reset_coordinator_scout.test)
+  add_test(NAME slot_initial_pose_launch_args_test
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test/slot_initial_pose_launch_args_test.py)
+  set_tests_properties(slot_initial_pose_launch_args_test PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME launch_control_with_slot_poses_rosrun_path
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test/slot_pose_mapper_rosrun_path_test.py
+            ${CATKIN_DEVEL_PREFIX}/lib/${PROJECT_NAME}/launch_control_with_slot_poses.py
+            ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/launch_control_with_slot_poses.py)
   foreach(case scene_projection safety_filter reset_guidance reset_closed_loop reset_scenarios reset_session fleet_schedule)
     catkin_add_gtest(${case}_test test/${case}_test.cpp)
     if(TARGET ${case}_test)

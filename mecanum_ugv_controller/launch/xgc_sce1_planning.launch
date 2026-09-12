@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="run_mode" default="simulation"/>
+    <arg name="config_file" default="$(find sce1_central_controller)/config/sce1_gazebo.yaml"/>
+    <node name="xgc_world_to_map" pkg="tf2_ros" type="static_transform_publisher"
+          args="0 0 0 0 0 0 world map" output="screen"/>
+    <include file="$(find sce1_central_controller)/launch/sce1_algorithm.launch">
+        <arg name="run_mode" value="$(arg run_mode)"/>
+        <arg name="config_file" value="$(arg config_file)"/>
+    </include>
+</launch>

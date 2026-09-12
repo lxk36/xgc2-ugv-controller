@@ -61,6 +61,13 @@ if(CATKIN_ENABLE_TESTING)
       target_link_libraries(mecanum_ugv_ros_sandbox_test ${catkin_LIBRARIES})
       add_dependencies(mecanum_ugv_ros_sandbox_test ${PROJECT_NAME}_node)
     endif()
+    add_rostest_gtest(mecanum_ugv_public_command_reset_test
+      test/mecanum_ugv_public_command_reset.test
+      test/mecanum_ugv_public_command_reset_test.cpp)
+    if(TARGET mecanum_ugv_public_command_reset_test)
+      target_link_libraries(mecanum_ugv_public_command_reset_test ${catkin_LIBRARIES})
+      add_dependencies(mecanum_ugv_public_command_reset_test ${PROJECT_NAME}_node)
+    endif()
   endif()
   find_program(PYTHON3_EXECUTABLE python3)
   if(PYTHON3_EXECUTABLE)

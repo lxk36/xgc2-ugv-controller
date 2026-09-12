@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="auto_start_tracking" default="false"/>
+    <arg name="ugv1_reset_initial_x" default=""/>
+    <arg name="ugv1_reset_initial_y" default=""/>
+    <arg name="ugv1_reset_initial_yaw" default=""/>
+    <arg name="ugv2_reset_initial_x" default=""/>
+    <arg name="ugv2_reset_initial_y" default=""/>
+    <arg name="ugv2_reset_initial_yaw" default=""/>
+    <include file="$(find mecanum_ugv_controller)/launch/ugv_mecanum_reset_controller.launch">
+        <arg name="ns" value="ugv1"/>
+        <arg name="auto_start_tracking" value="$(arg auto_start_tracking)"/>
+        <arg name="reset_initial_x" value="$(arg ugv1_reset_initial_x)"/>
+        <arg name="reset_initial_y" value="$(arg ugv1_reset_initial_y)"/>
+        <arg name="reset_initial_yaw" value="$(arg ugv1_reset_initial_yaw)"/>
+    </include>
+    <include file="$(find mecanum_ugv_controller)/launch/ugv_mecanum_reset_controller.launch">
+        <arg name="ns" value="ugv2"/>
+        <arg name="auto_start_tracking" value="$(arg auto_start_tracking)"/>
+        <arg name="reset_initial_x" value="$(arg ugv2_reset_initial_x)"/>
+        <arg name="reset_initial_y" value="$(arg ugv2_reset_initial_y)"/>
+        <arg name="reset_initial_yaw" value="$(arg ugv2_reset_initial_yaw)"/>
+    </include>
+</launch>

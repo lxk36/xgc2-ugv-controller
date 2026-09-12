@@ -44,8 +44,10 @@ class MecanumUgvRosNode {
         seedResetTarget();
         cmd_vel_pub_ = nh_.advertise<geometry_msgs::Twist>(cmd_vel_topic_, 1);
         control_state_pub_ = nh_.advertise<std_msgs::String>(control_state_topic_, queue_size_);
-        command_sub_ =
-            nh_.subscribe("command", queue_size_, &MecanumUgvRosNode::commandCallback, this);
+        namespaced_command_sub_ = nh_.subscribe(
+            "command", queue_size_, &MecanumUgvRosNode::namespacedCommandCallback, this);
+        command_sub_ = nh_.subscribe("/command", queue_size_,
+                                     &MecanumUgvRosNode::publicCommandCallback, this);
         pose_sub_ = nh_.subscribe(pose_topic_, queue_size_, &MecanumUgvRosNode::poseCallback, this);
         reset_pose_sub_ = nh_.subscribe(reset_pose_topic_, queue_size_,
                                         &MecanumUgvRosNode::resetPoseCallback, this);
@@ -62,6 +64,11 @@ class MecanumUgvRosNode {
             ros::spinOnce();
             const double now = ros::Time::now().toSec();
             controller_.update(now);
+            if (!controller_.lastResetAdmissionMiss().empty() &&
+                controller_.lastResetAdmissionMiss() != last_logged_reset_miss_) {
+                last_logged_reset_miss_ = controller_.lastResetAdmissionMiss();
+                ROS_ERROR("[MecanumUgvRosNode] %s", last_logged_reset_miss_.c_str());
+            }
             for (const auto& event : controller_.stateMachine().currentOutputEvents()) {
                 if (event.id == output_event_type::PUBLISH_CMD_VEL) {
                     const auto command = makeTwist(controller_.command());
@@ -147,26 +154,46 @@ class MecanumUgvRosNode {
         }
     }
 
-    void commandCallback(const std_msgs::String::ConstPtr& msg) {
+    void namespacedCommandCallback(const std_msgs::String::ConstPtr& msg) {
+        handleCommand(msg, "command");
+    }
+
+    void publicCommandCallback(const std_msgs::String::ConstPtr& msg) {
+        handleCommand(msg, "/command");
+    }
+
+    void handleCommand(const std_msgs::String::ConstPtr& msg, const char* source) {
         if (!msg || msg->data.empty()) {
+            ROS_WARN("[MecanumUgvRosNode] Ignoring empty command on %s", source);
             return;
         }
         const std::string command = normalize(msg->data);
         ::state_machine::EventId id = 0;
         if (command == "reset") {
             id = event_type::RESET_REQUESTED;
+            ROS_INFO("[MecanumUgvRosNode] Accepted reset command on %s", source);
         } else if (command == "track" || command == "tracking" || command == "custom" ||
                    command == "custom1" || command == "start") {
             id = event_type::CUSTOM1_REQUESTED;
+            ROS_INFO("[MecanumUgvRosNode] Accepted Custom1 command: %s on %s", msg->data.c_str(),
+                     source);
         } else if (command == "hold" || command == "stop") {
             id = event_type::STOP_REQUESTED;
+            ROS_INFO("[MecanumUgvRosNode] Accepted stop command: %s on %s", msg->data.c_str(),
+                     source);
         } else {
+            ROS_WARN("[MecanumUgvRosNode] Unknown command: %s on %s", msg->data.c_str(), source);
             return;
         }
         ::state_machine::Event event(id, ::state_machine::EventTimestamp{ros::Time::now().toSec()});
-        event.source = "command";
+        event.source = source;
         event.category = ::state_machine::EventCategory::kInput;
-        (void)controller_.postEvent(std::move(event));
+        const auto status = controller_.postEvent(std::move(event));
+        if (!status.ok()) {
+            ROS_WARN("[MecanumUgvRosNode] Failed to post command event: %s source=%s CONTROL=%s",
+                     status.message.c_str(), source,
+                     controller_.stateMachine().currentStateName(region_type::CONTROL).c_str());
+        }
     }
 
     void poseCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
@@ -263,7 +290,9 @@ class MecanumUgvRosNode {
     ros::Publisher cmd_vel_pub_;
     ros::Publisher control_state_pub_;
     ros::Subscriber command_sub_;
+    ros::Subscriber namespaced_command_sub_;
     ros::Subscriber pose_sub_;
+    std::string last_logged_reset_miss_;
     ros::Subscriber reset_pose_sub_;
     ros::Subscriber reference_twist_sub_;
     PeriodicGate status_gate_{};

@@ -1,3 +1,5 @@
+#include <ros/console.h>
+
 #include <cmath>
 #include <utility>
 
@@ -94,6 +96,12 @@ ResetState::ResetState(MecanumUgvController& controller) : controller_(controlle
     const auto target = controller_.resetTarget();
     if (controller_.resetTargetReady()) {
         controller_.resetSession().begin({target.x, target.y, target.yaw});
+        controller_.setResetHoldReason({});
+    } else {
+        controller_.setResetHoldReason(
+            "no target: reset_pose cache and reset_initial_* missing");
+        ROS_ERROR("[MecanumUgvController] Reset entered without a valid goal; "
+                  "holding Reset until timeout/Stop or a cached initialPose");
     }
     emitZero(ctx);
     return {};
@@ -114,9 +122,17 @@ ResetState::ResetState(MecanumUgvController& controller) : controller_(controlle
         return {};
     }
     if (!controller_.resetSession().active()) {
-        emitZero(ctx);
-        postDone(ctx, event_type::RESET_REJECTED);
-        return {};
+        if (controller_.resetTargetReady()) {
+            const auto target = controller_.resetTarget();
+            controller_.resetSession().begin({target.x, target.y, target.yaw});
+            controller_.setResetHoldReason({});
+        } else {
+            emitZero(ctx);
+            ROS_ERROR_THROTTLE(
+                1.0, "[MecanumUgvController] Reset holding with no target (topic=/command "
+                     "CONTROL=Reset reject=missing-initialPose)");
+            return {};
+        }
     }
     const auto feedback = controller_.resetSession().feedback(ros::Time(now).toNSec(), wall);
     if (feedback.valid && feedback.status != ugv_reset_safety::ResetSession::RUNNING) {
@@ -130,8 +146,7 @@ ResetState::ResetState(MecanumUgvController& controller) : controller_(controlle
     command.stamp = ros::Time(now);
     command.valid = true;
     if (feedback.valid) {
-        // Safety inputs are solved jointly. Refuse an invalid contract; do not
-        // apply post-QP saturation, which would invalidate the safe solution.
+        // Refuse a command outside chassis limits; do not silently saturate.
         if (std::abs(feedback.command.x) > cfg.max_linear_speed ||
             std::abs(feedback.command.y) > cfg.max_linear_speed ||
             std::abs(feedback.command.yaw) > cfg.max_yaw_rate) {

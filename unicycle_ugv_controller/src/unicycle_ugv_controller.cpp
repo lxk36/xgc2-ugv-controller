@@ -3,6 +3,7 @@
 #include <ros/console.h>
 
 #include <cmath>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -36,11 +37,63 @@ void UnicycleUgvController::update(double now_sec) {
     maybeAutoStartCustom1();
     if (machine_) {
         (void)machine_->update();
+        noteResetAdmissionAfterUpdate();
     }
 }
 
 ::state_machine::Status UnicycleUgvController::postEvent(::state_machine::Event event) {
-    return machine_->postEvent(std::move(event));
+    const auto id = event.id;
+    const std::string source = event.source;
+    if (id == event_type::RESET_REQUESTED) {
+        pending_reset_requested_ = true;
+        pending_reset_source_ = source.empty() ? "command" : source;
+        last_reset_admission_miss_.clear();
+    }
+    auto status = machine_->postEvent(std::move(event));
+    if (id == event_type::RESET_REQUESTED && !status.ok()) {
+        pending_reset_requested_ = false;
+        last_reset_admission_miss_ =
+            std::string("Failed to post command event: ") + status.message +
+            " source=" + pending_reset_source_ +
+            " CONTROL=" + machine_->currentStateName(region_type::CONTROL);
+        ROS_ERROR("[UnicycleUgvController] %s", last_reset_admission_miss_.c_str());
+    }
+    return status;
+}
+
+void UnicycleUgvController::setResetHoldReason(std::string reason) {
+    last_reset_hold_reason_ = std::move(reason);
+}
+
+void UnicycleUgvController::noteResetAdmissionAfterUpdate() {
+    if (!pending_reset_requested_) {
+        return;
+    }
+    pending_reset_requested_ = false;
+    if (machine_->currentState(region_type::CONTROL) == state_type::Reset) {
+        last_reset_admission_miss_.clear();
+        return;
+    }
+    last_reset_admission_miss_ = describeResetAdmissionMiss(pending_reset_source_);
+    ROS_ERROR("[UnicycleUgvController] %s", last_reset_admission_miss_.c_str());
+}
+
+std::string UnicycleUgvController::describeResetAdmissionMiss(const std::string& source) const {
+    const std::string control = machine_->currentStateName(region_type::CONTROL);
+    const bool health = healthReady();
+    const bool target = resetTargetReady();
+    std::ostringstream oss;
+    oss << "RESET_REQUESTED unmatched topic=" << source << " CONTROL=" << control
+        << " health=" << (health ? "ready" : "unhealthy")
+        << " target=" << (target ? "ready" : "missing");
+    if (control == "SelfCheck" && health) {
+        oss << " reason=health-ready-but-stuck-in-SelfCheck";
+    } else if (control == "SelfCheck") {
+        oss << " reason=unhealthy-SelfCheck-has-no-Reset-edge";
+    } else {
+        oss << " reason=no-matching-transition";
+    }
+    return oss.str();
 }
 
 ControllerConfig UnicycleUgvController::config() const {

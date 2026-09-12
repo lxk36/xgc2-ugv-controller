@@ -246,6 +246,11 @@ void UnicycleUgvRosNode::seedResetTarget() {
 
 void UnicycleUgvRosNode::updateOnce() {
     controller_.update(ros::Time::now().toSec());
+    if (!controller_.lastResetAdmissionMiss().empty() &&
+        controller_.lastResetAdmissionMiss() != last_logged_reset_miss_) {
+        last_logged_reset_miss_ = controller_.lastResetAdmissionMiss();
+        ROS_ERROR("[UnicycleUgvRosNode] %s", last_logged_reset_miss_.c_str());
+    }
     dispatchOutputEvents(controller_.stateMachine().currentOutputEvents());
     reset_client_.update({state_.x, state_.y, state_.yaw}, state_.stamp, controller_.healthReady());
     const auto control_state = controller_.stateMachine().currentState(region_type::CONTROL);

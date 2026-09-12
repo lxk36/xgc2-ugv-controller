@@ -1,0 +1,17 @@
+<launch>
+  <param name="/use_sim_time" value="false"/>
+  <node pkg="unicycle_ugv_controller" type="unicycle_ugv_controller_node" name="unicycle_ugv_controller" ns="ugv_test" output="screen">
+    <rosparam command="load" file="$(find unicycle_ugv_controller)/config/unicycle_ugv_controller.yaml"/>
+    <param name="state_source" value="platform_pose"/>
+    <param name="tracking_strategy" value="flatness"/>
+    <param name="control_rate_hz" value="100.0"/>
+    <param name="command_publish_rate_hz" value="50.0"/>
+    <param name="idle_cmd_rate_hz" value="5.0"/>
+    <param name="status_publish_rate_hz" value="50.0"/>
+    <param name="state_timeout" value="0.2"/>
+    <param name="reset_initial_x" type="double" value="0.8"/>
+    <param name="reset_initial_y" type="double" value="0.0"/>
+    <param name="reset_initial_yaw" type="double" value="0.0"/>
+  </node>
+  <test test-name="unicycle_ugv_public_command_reset_test" pkg="unicycle_ugv_controller" type="unicycle_ugv_public_command_reset_test" time-limit="30.0"/>
+</launch>

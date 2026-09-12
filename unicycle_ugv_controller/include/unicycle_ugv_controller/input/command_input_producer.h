@@ -15,7 +15,9 @@ class CommandInputProducer {
     CommandInputProducer(ros::NodeHandle& nh, EventSink event_sink, uint32_t queue_size);
 
    private:
-    void commandCallback(const std_msgs::String::ConstPtr& msg);
+    void namespacedCommandCallback(const std_msgs::String::ConstPtr& msg);
+    void publicCommandCallback(const std_msgs::String::ConstPtr& msg);
+    void handleCommand(const std_msgs::String::ConstPtr& msg, const char* source);
     void post(::state_machine::EventId id, const char* source);
 
     EventSink event_sink_;

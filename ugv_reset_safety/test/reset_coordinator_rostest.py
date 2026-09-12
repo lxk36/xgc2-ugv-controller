@@ -6,6 +6,7 @@ It makes no wheel-contact, braking, Gazebo, or physical-robot claim.
 """
 
 import math
+import subprocess
 import threading
 import time
 import unittest
@@ -304,6 +305,14 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             self.publish_pose = False
         self.wait(lambda: self.stopped() and self.state == "Reset", 0.6,
                   "loss of canonical pose must stop and leave Reset")
+
+    def test_coordinator_does_not_own_command_or_cmd_vel(self):
+        info = subprocess.check_output(["rosnode", "info", "/reset_fixture_coordinator"],
+                                       text=True)
+        self.assertNotIn("/command", info)
+        self.assertNotIn("cmd_vel", info)
+        self.assertNotIn("alg/reference", info)
+        self.assertIn("reset/response", info)
 
 
 if __name__ == "__main__":

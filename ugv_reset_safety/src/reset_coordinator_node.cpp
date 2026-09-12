@@ -557,7 +557,7 @@ class Coordinator {
         for (std::size_t i = 0; i < robots.size(); ++i) {
             auto& e = *entries_[i];
             // Nonselected owners remain in Reset but receive an exact zero.
-            // They are stationary obstacles in the QP, not free actuators.
+            // They are stationary obstacles, not free actuators.
             if (!selected[i] &&
                 (e.measured_speed > 0.03 || std::abs(e.measured_omega) > 0.05 ||
                  robots[i].previous.cwiseAbs().maxCoeff() > filter_.feasibility_tolerance)) {
@@ -592,15 +592,10 @@ class Coordinator {
                 robots[i].previous.cwiseAbs().maxCoeff() <= filter_.feasibility_tolerance &&
                 e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
         }
-        passing_.apply(robots, guidance_obstacles, fence_, filter_);
         filter_.dt = dt;
-        const auto filtered = solveSafetyFilter(robots, obstacles_, fence_, filter_);
-        if (!filtered.ok()) {
-            rejectActive("safety filter: " + filtered.detail);
-            return;
-        }
+        passing_.apply(robots, guidance_obstacles, fence_, filter_);
         if ((ros::WallTime::now() - wall).toSec() > 1.0 / frequency_) {
-            rejectActive("safety solve deadline missed");
+            rejectActive("reset solve deadline missed");
             return;
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -609,14 +604,17 @@ class Coordinator {
                 continue;
             }
             const bool arrived =
-                robots[i].stop_requested && filtered.commands[i].isZero(0.0) &&
+                robots[i].stop_requested && robots[i].nominal.isZero(0.0) &&
                 e.robot.previous.cwiseAbs().maxCoeff() <= filter_.feasibility_tolerance &&
                 e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
             if (arrived || completed_[i]) {
                 completed_[i] = true;
                 reply(e, ResetResponse::ARRIVED, Eigen::Vector3d::Zero(), "");
+            } else if (!robots[i].local_plan_feasible) {
+                reply(e, ResetResponse::RUNNING, Eigen::Vector3d::Zero(),
+                      "no feasible DWA sample");
             } else {
-                reply(e, ResetResponse::RUNNING, filtered.commands[i], "");
+                reply(e, ResetResponse::RUNNING, robots[i].nominal, "");
             }
         }
     }

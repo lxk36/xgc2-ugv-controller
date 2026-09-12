@@ -41,6 +41,9 @@ struct Robot {
     // Require an exact zero command while retaining this active robot's
     // disturbance barriers. The zero must also satisfy the slew bounds.
     bool stop_requested{false};
+    // DWA found an admissible sample this tick. False is fail-closed: zero and
+    // reject, not an unrolled brake treated as a safe command.
+    bool local_plan_feasible{true};
 };
 
 struct ConvexObstacle {

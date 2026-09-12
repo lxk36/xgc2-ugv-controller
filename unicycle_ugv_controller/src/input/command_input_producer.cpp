@@ -21,30 +21,41 @@ std::string normalize(std::string value) {
 CommandInputProducer::CommandInputProducer(ros::NodeHandle& nh, EventSink event_sink,
                                            uint32_t queue_size)
     : event_sink_(std::move(event_sink)) {
-    namespaced_command_sub_ =
-        nh.subscribe("command", queue_size, &CommandInputProducer::commandCallback, this);
-    command_sub_ =
-        nh.subscribe("/command", queue_size, &CommandInputProducer::commandCallback, this);
+    namespaced_command_sub_ = nh.subscribe(
+        "command", queue_size, &CommandInputProducer::namespacedCommandCallback, this);
+    command_sub_ = nh.subscribe("/command", queue_size,
+                                &CommandInputProducer::publicCommandCallback, this);
 }
 
-void CommandInputProducer::commandCallback(const std_msgs::String::ConstPtr& msg) {
+void CommandInputProducer::namespacedCommandCallback(const std_msgs::String::ConstPtr& msg) {
+    handleCommand(msg, "command");
+}
+
+void CommandInputProducer::publicCommandCallback(const std_msgs::String::ConstPtr& msg) {
+    handleCommand(msg, "/command");
+}
+
+void CommandInputProducer::handleCommand(const std_msgs::String::ConstPtr& msg,
+                                         const char* source) {
     if (!msg || msg->data.empty()) {
-        ROS_WARN("[UgvCommandInputProducer] Ignoring empty command");
+        ROS_WARN("[UgvCommandInputProducer] Ignoring empty command on %s", source);
         return;
     }
     const std::string command = normalize(msg->data);
     if (command == "track" || command == "tracking" || command == "custom" ||
         command == "custom1" || command == "start") {
-        ROS_INFO("[UgvCommandInputProducer] Accepted Custom1 command: %s", msg->data.c_str());
-        post(event_type::CUSTOM1_REQUESTED, "command");
+        ROS_INFO("[UgvCommandInputProducer] Accepted Custom1 command: %s on %s",
+                 msg->data.c_str(), source);
+        post(event_type::CUSTOM1_REQUESTED, source);
     } else if (command == "hold" || command == "stop") {
-        ROS_INFO("[UgvCommandInputProducer] Accepted stop command: %s", msg->data.c_str());
-        post(event_type::STOP_REQUESTED, "command");
+        ROS_INFO("[UgvCommandInputProducer] Accepted stop command: %s on %s", msg->data.c_str(),
+                 source);
+        post(event_type::STOP_REQUESTED, source);
     } else if (command == "reset") {
-        ROS_INFO("[UgvCommandInputProducer] Accepted reset command");
-        post(event_type::RESET_REQUESTED, "command");
+        ROS_INFO("[UgvCommandInputProducer] Accepted reset command on %s", source);
+        post(event_type::RESET_REQUESTED, source);
     } else {
-        ROS_WARN("[UgvCommandInputProducer] Unknown command: %s", msg->data.c_str());
+        ROS_WARN("[UgvCommandInputProducer] Unknown command: %s on %s", msg->data.c_str(), source);
     }
 }
 
