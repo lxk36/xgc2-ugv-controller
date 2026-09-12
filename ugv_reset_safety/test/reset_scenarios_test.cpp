@@ -188,6 +188,10 @@ ScenarioResult runScenario(std::vector<Robot> robots, const std::vector<ResetTar
                 result.failure += detail.str();
             }
         }
+        if (result.completed) {
+            EXPECT_LE(result.max_position_error, 0.05);
+            EXPECT_LE(result.max_yaw_error, 10.0 * kPi / 180.0);
+        }
         static int recorded_scenarios = 0;
         ::testing::Test::RecordProperty("scenario_" + std::to_string(++recorded_scenarios),
                                         result.describe());
@@ -371,8 +375,7 @@ TEST(ResetScenarios, DiverseInitialPosesOnIdealPlants) {
             EXPECT_TRUE(result.completed) << "type=" << static_cast<int>(type)
                                           << " sample=" << sample << ": " << result.describe();
             EXPECT_FALSE(result.collision);
-            // The current admission/completion contract is XY <= 5 cm. Yaw
-            // is reported, but is not silently promoted to an arrival gate.
+            // Arrival is the complete frozen pose, for both chassis.
             if (result.completed) {
                 EXPECT_LE(result.max_position_error, 0.05);
             }

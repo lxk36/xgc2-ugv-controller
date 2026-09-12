@@ -15,7 +15,7 @@ struct ResetTarget {
 
 struct PathOptions {
     double position_tolerance = 0.05;
-    double mecanum_yaw_tolerance = 0.05;
+    double yaw_tolerance = 0.17453292519943295;  // 10 degrees, shortest angle
     double path_clearance = 0.18;
     double lookahead = 0.5;
 };
@@ -38,6 +38,8 @@ bool validConvexObstacle(const ConvexObstacle& obstacle);
 
 bool withinTargetTolerance(const Robot& robot, const ResetTarget& target,
                            const PathOptions& options = PathOptions());
+
+double unicyclePoseDistance(const Robot& robot, const ResetTarget& target, double lateral_offset);
 
 VisibilityPath planVisibilityPath(const Eigen::Vector2d& start, const Eigen::Vector2d& goal,
                                   const std::vector<ConvexObstacle>& obstacles, const Fence& fence,

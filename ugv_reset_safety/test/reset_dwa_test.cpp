@@ -20,7 +20,7 @@ Robot scout() {
     return r;
 }
 
-TEST(ResetDwa, StraightFourMetresArrivesWithinControllerTimeout) {
+TEST(ResetDwa, FourMetresRestoresPositionAndHeadingWithinControllerTimeout) {
     std::vector<Robot> robots{scout()};
     ResetPath path;
     ASSERT_EQ(path.setGoal(robots[0], {{4.0, 0.0}, 0.0}, {}, Fence()).status, PathStatus::Moving);
@@ -34,7 +34,7 @@ TEST(ResetDwa, StraightFourMetresArrivesWithinControllerTimeout) {
         ASSERT_TRUE(r.local_plan_feasible);
         EXPECT_LE(std::abs(r.command.x() - r.previous.x()), 0.35 * config.dt + 1e-9);
         EXPECT_LE(std::abs(r.command.z() - r.previous.z()), 0.6 * config.dt + 1e-9);
-        EXPECT_LE(r.command.x(), 0.0);
+        EXPECT_LE(std::abs(r.command.x()), r.limits.max_vx);
         EXPECT_DOUBLE_EQ(r.command.y(), 0.0);
         peak_speed = std::max(peak_speed, std::abs(r.command.x()));
         const double mid_yaw = r.yaw + 0.5 * config.dt * r.command.z();
@@ -48,6 +48,8 @@ TEST(ResetDwa, StraightFourMetresArrivesWithinControllerTimeout) {
         }
     }
     EXPECT_GT(peak_speed, 0.30);
+    EXPECT_LE(std::abs(std::atan2(std::sin(robots[0].yaw), std::cos(robots[0].yaw))),
+              10.0 * 3.14159265358979323846 / 180.0);
     EXPECT_TRUE(arrived) << robots[0].position.transpose() << " command "
                          << robots[0].command.transpose();
 }

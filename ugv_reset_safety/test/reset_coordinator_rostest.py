@@ -223,9 +223,9 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             self.assertEqual(sent[0].applied_command.angular.z, 0.0)
             self.assertTrue(any(abs(r.applied_command.linear.x) > 0.01 for r in sent),
                             "requests must acknowledge commands the native owner actually published")
-            self.assertLessEqual(math.hypot(self.pose[0], self.pose[1]), 0.055)
-            if not self.scout:
-                self.assertLessEqual(abs(self.pose[2]), 0.12)
+            self.assertLessEqual(math.hypot(self.pose[0], self.pose[1]), 0.05)
+            self.assertLessEqual(abs(math.atan2(math.sin(self.pose[2]), math.cos(self.pose[2]))),
+                                 math.radians(10.0))
             self.assertTrue(self.stopped())
             self.assertTrue(all(all(math.isfinite(v) for v in c) for c in self.commands))
             self.assertTrue(all(abs(c[0]) <= self.max_vx + 1e-9 and abs(c[1]) <= self.max_vy + 1e-9 and
@@ -248,8 +248,8 @@ class ResetCoordinatorTransportTest(unittest.TestCase):
             with self.lock:
                 yaw_error = math.atan2(math.sin(turn_goal - self.pose[2]),
                                        math.cos(turn_goal - self.pose[2]))
-                self.assertLessEqual(abs(yaw_error), 0.055)
-                self.assertLessEqual(math.hypot(self.pose[0] - turn_x, self.pose[1] - turn_y), 0.055)
+                self.assertLessEqual(abs(yaw_error), math.radians(10.0))
+                self.assertLessEqual(math.hypot(self.pose[0] - turn_x, self.pose[1] - turn_y), 0.05)
                 self.assertTrue(self.stopped())
 
         # Unsupported scene geometry and a valid geometric revision must both

@@ -385,9 +385,14 @@ class ResetDwa {
 
     static double trajectoryScore(const Robot& robot, const Robot& endpoint,
                                   const Eigen::Vector3d& command, const ResetPath& path,
-                                  bool encounter) {
+                                  bool encounter, double lateral_offset) {
         if (path.reached(robot)) {
             return command.squaredNorm();
+        }
+        if (robot.type == RobotType::Unicycle &&
+            path.project(robot.position).remaining <= path.lookahead()) {
+            return 2.0 * unicyclePoseDistance(endpoint, path.target(), lateral_offset) +
+                   0.2 * command.squaredNorm();
         }
         double score =
             2.0 * (endpoint.position - path.pointAhead(robot.position, path.lookahead())).norm() +
@@ -589,7 +594,8 @@ class ResetDwa {
                                                 std::sin(robot.yaw) - std::sin(predicted.yaw));
                         }
                         const double score =
-                            trajectoryScore(robot, predicted, candidate, paths[index], encounter) +
+                            trajectoryScore(robot, predicted, candidate, paths[index], encounter,
+                                            observations_.at(robot.id).lateral_offset) +
                             encounterScore(index, endpoint, candidate, robots, paths);
                         candidates.push_back({candidate, score});
                     }

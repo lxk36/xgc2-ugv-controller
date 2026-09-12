@@ -38,6 +38,26 @@ double distanceToBox(const Eigen::Vector2d& point, double xmin, double xmax, dou
     return std::hypot(dx, dy);
 }
 
+TEST(ResetPath, ArrivalRequiresPositionAndTenDegreeShortestHeadingForBothChassis) {
+    for (auto type : {RobotType::Unicycle, RobotType::Mecanum}) {
+        auto robot = makeRobot(type);
+        ResetTarget target;
+        target.yaw = 179.0 * kPi / 180.0;
+        robot.yaw = -179.0 * kPi / 180.0;
+        robot.position = {0.05, 0.0};
+        EXPECT_TRUE(withinTargetTolerance(robot, target));
+        robot.position.x() = 0.050001;
+        EXPECT_FALSE(withinTargetTolerance(robot, target));
+        robot.position.setZero();
+        robot.yaw = target.yaw - 11.0 * kPi / 180.0;
+        EXPECT_FALSE(withinTargetTolerance(robot, target));
+        robot.yaw = target.yaw - 9.0 * kPi / 180.0;
+        EXPECT_TRUE(withinTargetTolerance(robot, target));
+        robot.yaw = target.yaw + kPi;
+        EXPECT_FALSE(withinTargetTolerance(robot, target));
+    }
+}
+
 TEST(SafetyFootprint, CoversRectangleIncludingCornersAfterPoseTransform) {
     Robot value = makeRobot();
     value.position = Eigen::Vector2d(1.1, -2.3);

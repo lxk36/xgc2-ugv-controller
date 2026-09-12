@@ -5,6 +5,8 @@
 #include <limits>
 #include <utility>
 
+#include "reeds_shepp_distance.h"
+
 namespace ugv_reset_safety {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
@@ -34,8 +36,8 @@ bool validRobot(const Robot& robot) {
 
 bool validOptions(const PathOptions& options) {
     return std::isfinite(options.position_tolerance) && options.position_tolerance > 0.0 &&
-           std::isfinite(options.mecanum_yaw_tolerance) && options.mecanum_yaw_tolerance > 0.0 &&
-           options.mecanum_yaw_tolerance <= kPi && std::isfinite(options.path_clearance) &&
+           std::isfinite(options.yaw_tolerance) && options.yaw_tolerance > 0.0 &&
+           options.yaw_tolerance <= kPi && std::isfinite(options.path_clearance) &&
            options.path_clearance > 0.0 && std::isfinite(options.lookahead) &&
            options.lookahead > 0.0;
 }
@@ -286,8 +288,22 @@ VisibilityPath planVisibilityPath(const Eigen::Vector2d& start, const Eigen::Vec
 bool withinTargetTolerance(const Robot& robot, const ResetTarget& target,
                            const PathOptions& options) {
     return (robot.position - target.position).norm() <= options.position_tolerance &&
-           (robot.type != RobotType::Mecanum ||
-            std::abs(wrap(target.yaw - robot.yaw)) <= options.mecanum_yaw_tolerance);
+           std::abs(wrap(target.yaw - robot.yaw)) <= options.yaw_tolerance;
+}
+
+double unicyclePoseDistance(const Robot& robot, const ResetTarget& target, double lateral_offset) {
+    // Score in the unicycle's rotation-center coordinates. Apply the same
+    // rigid offset to both poses; the frozen body-origin target is unchanged.
+    const Eigen::Vector2d center =
+        robot.position + lateral_offset * Eigen::Vector2d(std::cos(robot.yaw), std::sin(robot.yaw));
+    const Eigen::Vector2d goal =
+        target.position +
+        lateral_offset * Eigen::Vector2d(std::cos(target.yaw), std::sin(target.yaw));
+    const double radius = robot.limits.max_vx / robot.limits.max_omega;
+    const Eigen::Vector2d delta = (goal - center) / radius;
+    const double c = std::cos(robot.yaw), s = std::sin(robot.yaw);
+    return radius * reedsSheppDistance(c * delta.x() + s * delta.y(),
+                                       -s * delta.x() + c * delta.y(), target.yaw - robot.yaw);
 }
 
 void ResetPath::clear() {

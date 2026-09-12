@@ -12,11 +12,9 @@ Experiment slot's `initialPose` to these parameters. Missing targets never
 default to the origin. Updating a target only caches it; `reset` enters Reset,
 and the session freezes that target and its generation.
 
-Arrival requires XY error at most 0.05 m, measured low speed, and an exact zero
-command. Mecanum also requires wrapped yaw error at most 0.05 rad. Scout arrival
-is position-only. Stop and timeout also return Ready: Ready alone is not arrival.
-The coordinator's 600 s session deadline does not extend the chassis controller's
-45 s Reset timeout. Closed-loop timing must be checked against the latter.
+Arrival requires XY error at most 0.05 m, shortest yaw error at most 10 degrees,
+measured low speed, and an exact zero command for both chassis. Stop and timeout
+also return Ready: Ready alone is not arrival. The chassis Reset timeout is 90 s.
 
 ```bash
 roslaunch ugv_reset_safety ugv_reset_coordinator.launch \
@@ -47,8 +45,12 @@ it produces no nominal velocity or extra control phase.
 and the previous command's acceleration window. Scout samples both positive and
 negative `vx`, with `vy = 0`; Mecanum samples `vx`, `vy`, and yaw independently.
 The candidate trajectories are scored directly against the path, heading, and
-stopping objective. Heading alignment loses weight near the actual target so
-Scout is not required to keep turning after its position can converge.
+stopping objective. When the path lookahead reaches the original target, Scout
+uses Reeds-Shepp distance to that complete pose as its terminal score. Both the
+candidate and target are expressed at the estimated rotation center. The metric
+accounts for forward/reverse nonholonomic maneuvers; DWA still selects each body
+velocity and checks its footprint rollout. No Reeds-Shepp segments are executed.
+The distance formulas are adapted from OMPL 1.4.2; see `THIRD_PARTY_NOTICES`.
 
 Scout trajectory scoring uses successive existing poses to estimate the bounded
 signed lateral/yaw coupling, without a new twist subscription or lateral
@@ -105,9 +107,9 @@ leases, measured arrival, and timeouts.
 
 The mathematical tests cover path validity, speed and acceleration limits,
 forward/reverse choice, bounded-time straight return, blocked motion, obstacle
-layouts, Mecanum yaw, and Scout lateral coupling with actuator lag. Scenario
+layouts, complete target poses, and Scout lateral coupling with actuator lag. Scenario
 collision audits independently check physical rectangle footprints every 2 ms.
-The four-Scout crossing/return regression enforces the actual 45 s owner timeout.
+The four-Scout crossing/return regression uses a stricter 45 s convergence bound.
 Production close-goal sweeps and the ROS transport initial pose use the same
 45 s gate. Seeded-layout tests retain their arrival and collision assertions.
 These finite tests do not establish arbitrary-fleet convergence or hardware
