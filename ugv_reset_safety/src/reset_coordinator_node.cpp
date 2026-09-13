@@ -548,6 +548,7 @@ class Coordinator {
             }
             robots[i].active = selected[i];
             robots[i].stop_requested = false;
+            robots[i].brake_requested = false;
             robots[i].command.setZero();
             if (!selected[i]) {
                 continue;
@@ -580,10 +581,12 @@ class Coordinator {
                                                 std::cos(robots[i].yaw - e.path.target().yaw));
             coast.yaw += std::copysign(std::abs(e.measured_omega) * ResetDwa::predictionHorizon(),
                                        yaw_error);
+            robots[i].brake_requested = g.status == PathStatus::Reached && e.path.reached(coast) &&
+                                        e.measured_speed <= 0.03 &&
+                                        std::abs(e.measured_omega) <= 0.05;
             robots[i].stop_requested =
-                g.status == PathStatus::Reached && e.path.reached(coast) &&
-                robots[i].previous.cwiseAbs().maxCoeff() <= dwa_config_.feasibility_tolerance &&
-                e.measured_speed <= 0.03 && std::abs(e.measured_omega) <= 0.05;
+                robots[i].brake_requested &&
+                robots[i].previous.cwiseAbs().maxCoeff() <= dwa_config_.feasibility_tolerance;
         }
         dwa_config_.dt = dt;
         dwa_.apply(robots, paths, path_obstacles, fence_, dwa_config_);

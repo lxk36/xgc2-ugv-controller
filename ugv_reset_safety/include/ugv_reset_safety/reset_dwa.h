@@ -541,6 +541,20 @@ class ResetDwa {
         const double dt = std::max(1.0e-3, std::min(0.1, config.dt));
         for (const auto index : order) {
             auto& robot = robots[index];
+            if (robot.brake_requested) {
+                // A residual pose objective can prefer endless micromotions
+                // inside the accepted goal. Braking is a separate intent from
+                // the acknowledged parked state, with the same admissibility
+                // check as every moving candidate (including its braking tail).
+                const auto braking = brakingCommand(robot, dt);
+                const auto checked = rollout(index, braking, robots, committed_commands, committed,
+                                             obstacles, fence, config);
+                robot.command = checked.safe ? braking : Eigen::Vector3d::Zero();
+                robot.local_plan_feasible = checked.safe;
+                committed_commands[index] = robot.command;
+                committed[index] = true;
+                continue;
+            }
             bool encounter = false;
             for (std::size_t j = 0; j < robots.size(); ++j) {
                 if (j == index || !robots[j].active || robots[j].stop_requested) {

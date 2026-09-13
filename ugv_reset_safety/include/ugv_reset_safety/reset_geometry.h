@@ -40,6 +40,9 @@ struct Robot {
     bool active{true};
     // Arrived and measured stopped; retain this robot as a parked footprint.
     bool stop_requested{false};
+    // The coordinator has accepted the pose and coast margin. Reach an applied
+    // zero through the checked dynamic window before declaring this body parked.
+    bool brake_requested{false};
     // DWA found an admissible sample this tick. False is fail-closed: zero and
     // reject, not an unrolled brake treated as a safe command.
     bool local_plan_feasible{true};

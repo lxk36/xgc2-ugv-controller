@@ -54,6 +54,38 @@ TEST(ResetDwa, FourMetresRestoresPositionAndHeadingWithinControllerTimeout) {
                          << robots[0].command.transpose();
 }
 
+TEST(ResetDwa, AcceptedPoseBrakesResidualMotionBeforeParking) {
+    std::vector<Robot> robots{scout()};
+    auto& robot = robots[0];
+    // Observed terminal pose from the native Scout transport regression.
+    robot.position = {0.00508955, 0.04966349};
+    robot.yaw = -0.13375718;
+    robot.previous = {-0.02, 0.0, 0.01};
+    robot.brake_requested = true;
+    ResetPath path;
+    ASSERT_EQ(path.setGoal(robot, {{0.0, 0.0}, 0.0}, {}, Fence()).status, PathStatus::Reached);
+    ResetDwa dwa;
+    DwaConfig config;
+    for (int tick = 0; tick < 5; ++tick) {
+        dwa.apply(robots, {path}, {}, Fence(), config);
+        ASSERT_TRUE(robot.local_plan_feasible);
+        EXPECT_LE(std::abs(robot.command.x() - robot.previous.x()),
+                  robot.limits.accel_vx * config.dt + 1e-9);
+        EXPECT_LE(std::abs(robot.command.z() - robot.previous.z()),
+                  robot.limits.accel_omega * config.dt + 1e-9);
+        robot.previous = robot.command;
+    }
+    EXPECT_TRUE(robot.command.isZero(0.0));
+    EXPECT_FALSE(robot.stop_requested);
+
+    // A braking request must not turn an unsafe footprint into a feasible stop.
+    Fence blocked;
+    blocked.xmax = robot.position.x();
+    dwa.apply(robots, {path}, {}, blocked, config);
+    EXPECT_FALSE(robot.local_plan_feasible);
+    EXPECT_TRUE(robot.command.isZero(0.0));
+}
+
 TEST(ResetDwa, MissingOrInvalidPathCannotProduceMotion) {
     std::vector<Robot> robots{scout()};
     robots[0].command = {-0.2, 0, 0};
