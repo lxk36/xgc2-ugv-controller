@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="scenario_dir" default="$(find formation_generator)/config/scenarios/uav5_ugv4_circle"/>
+  <arg name="scenario_dir" default="$(find formation_generator)/config/scenarios/mixed_circle"/>
   <arg name="node_output" default="screen"/>
   <node name="xgc_world_to_map" pkg="tf2_ros" type="static_transform_publisher" args="0 0 0 0 0 0 world map"/>
   <node name="formation_mission_clock" pkg="formation_generator" type="formation_mission_clock.py" required="true" output="$(arg node_output)">
